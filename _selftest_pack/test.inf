@@ -1,0 +1,10 @@
+[Version]
+signature="$CHICAGO$"
+
+[Strings]
+SCHEME_NAME = "Test Pack"
+pointer = "pointer.cur"
+help = "help.cur"
+work = "work.cur"
+busy = "busy.cur"
+cross = "cross.cur"

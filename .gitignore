@@ -1,0 +1,42 @@
+# 构建产物
+/dist/
+/build/
+*.egg-info/
+*.whl
+*.tar.gz
+
+# makepkg 的工作目录与产物
+/packaging/src/
+/packaging/pkg/
+/packaging/*.pkg.tar.*
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+
+# 编辑器 / 系统
+*.swp
+*~
+.DS_Store
+.idea/
+.vscode/
+
+# 本项目运行时产生的备份（apply.py / set-cursor.sh 会写 .bak.<时间戳>）
+*.bak.*
+*.backup[0-9]*
+
+# 自检/调试的临时产物
+/preview/
+/_chk/
+/_d/
+/_disttest/
+/_pkgtest/
+/_xdgtest/
+/_v.log
+/_st.log
+
+# 编译出的验证器（源码 verify_cursor.c 保留）
+/verify_cursor

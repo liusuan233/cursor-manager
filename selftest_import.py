@@ -1,0 +1,344 @@
+#!/usr/bin/env python3
+"""导入器自检：Windows 光标包 → Xcursor 主题 的正确性验证。
+
+覆盖：
+  1. 预乘 / 反预乘往返无损（**通道顺序**，曾经红蓝写反过）
+  2. 写盘 → 读回 往返后颜色不变
+  3. .cur 合成 → 解析 → 热点正确
+  4. .ani（RIFF/ACON）解析：帧数 / 延时 / 序列
+  5. 完整导入真实光标包：角色识别、热点缩放、别名
+  6. 压缩包（zip / tar.gz）与文件夹结果一致
+  7. 主题名清洗（空格 / U+2011 / CJK）
+  8. 别名表自洽（没有名字指向两个不同光标）
+
+真实包路径可用环境变量 CURSORKIT_TEST_PACK 覆盖；
+找不到时自动合成一个包，测试仍然完整可跑。
+退出码 0 = 全部通过。
+"""
+
+from __future__ import annotations
+
+import os
+import struct
+import sys
+import tarfile
+import tempfile
+import zipfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT))
+
+try:
+    import numpy as np
+except ImportError:
+    np = None
+
+from cursorkit import CursorFile
+from cursorkit.importer import (
+    ALIAS_TABLE, ROLES, PackSource, import_pack, sanitize_theme_name,
+)
+from cursorkit.windows import parse_ani, parse_icondir, load_windows_cursor
+from cursorkit.xcursor import _premultiply, _unpremultiply, write_xcursor
+
+FAILURES: list[str] = []
+CHECKS = 0
+
+
+def check(label: str, cond: bool, detail: str = "") -> None:
+    global CHECKS
+    CHECKS += 1
+    mark = "\033[32m✓\033[0m" if cond else "\033[31m✘\033[0m"
+    print(f"  {mark} {label}" + (f"  — {detail}" if detail else ""))
+    if not cond:
+        FAILURES.append(label)
+
+
+def section(t: str) -> None:
+    print(f"\n=== {t} ===")
+
+
+# ---------------------------------------------------------------------------
+# 合成测试素材
+# ---------------------------------------------------------------------------
+
+def make_cur(width: int, height: int, rgba: bytes, hx: int, hy: int) -> bytes:
+    """手搓一个 32bpp 的 .cur（ICONDIR + BITMAPINFOHEADER + BGRA + AND掩码）。"""
+    stride = width * 4
+    xor = bytearray()
+    for y in range(height - 1, -1, -1):            # DIB 自下而上
+        for x in range(width):
+            i = (y * width + x) * 4
+            r, g, b, a = rgba[i : i + 4]
+            xor += bytes((b, g, r, a))
+    mask_stride = ((width + 31) // 32) * 4
+    and_mask = b"\x00" * (mask_stride * height)
+    dib = struct.pack("<IiiHHIIiiII", 40, width, height * 2, 1, 32, 0,
+                      len(xor) + len(and_mask), 0, 0, 0, 0) + bytes(xor) + and_mask
+    entry = struct.pack("<BBBBHHII", width % 256, height % 256, 0, 0, hx, hy, len(dib), 22)
+    return struct.pack("<HHH", 0, 2, 1) + entry + dib
+
+
+def make_pack(dest: Path, n_roles: int = 4) -> Path:
+    """合成一个极简 Windows 光标包（带 .inf）。"""
+    dest.mkdir(parents=True, exist_ok=True)
+    chosen = ROLES[:n_roles]
+    lines = ['[Version]', 'signature="$CHICAGO$"', '', '[Strings]',
+             'SCHEME_NAME = "Test Pack"']
+    for i, (key, _label, _kw, _canon) in enumerate(chosen):
+        w = h = 32
+        px = bytearray()
+        for y in range(h):
+            for x in range(w):
+                inside = 4 <= x < 28 and 4 <= y < 28
+                # 每个角色给一组可区分的颜色，方便验证通道顺序
+                r, g, b = (40 + i * 40) % 256, (200 - i * 30) % 256, 90
+                px += bytes((r, g, b, 255)) if inside else bytes((0, 0, 0, 0))
+        fname = f"{key}.cur"
+        (dest / fname).write_bytes(make_cur(w, h, bytes(px), hx=2 + i, hy=3 + i))
+        lines.append(f'{key} = "{fname}"')
+    (dest / "test.inf").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return dest
+
+
+def find_real_pack() -> Path | None:
+    env = os.environ.get("CURSORKIT_TEST_PACK")
+    if env and Path(env).is_dir():
+        return Path(env)
+    for cand in (
+        Path.home() / ".icons/.disabled-20261010/KINOMOTO SAKURA",
+        Path.home() / ".icons" / "KINOMOTO SAKURA",
+    ):
+        if cand.is_dir() and any(cand.glob("*.ani")):
+            return cand
+    return None
+
+
+# ---------------------------------------------------------------------------
+# 测试
+# ---------------------------------------------------------------------------
+
+def test_roundtrip(tmp: Path) -> None:
+    section("1. 预乘 / 反预乘往返（通道顺序 —— 曾经红蓝写反过）")
+    if np is None:
+        check("需要 numpy", False)
+        return
+
+    # 几个已知颜色，覆盖 不透明 / 半透明 / 全透明
+    pixels = [(255, 0, 0, 255), (0, 255, 0, 255), (0, 0, 255, 255),
+              (255, 128, 0, 128), (10, 20, 30, 64), (0, 0, 0, 0)]
+    rgba = b"".join(bytes(p) for p in pixels)
+    back = _unpremultiply(_premultiply(rgba, len(pixels), 1), len(pixels), 1)
+    a = np.frombuffer(rgba, np.uint8).reshape(-1, 4).astype(int)
+    b = np.frombuffer(back, np.uint8).reshape(-1, 4).astype(int)
+    diff = np.abs(a - b)
+
+    check("往返后 alpha 完全一致", (diff[:, 3] == 0).all())
+    # 预乘对低 alpha 有量化损失，但不该出现通道错位（错位会是上百的差）
+    check("往返后通道没错位（最大偏差 < 4）", diff[:, :3].max() < 4,
+          f"最大偏差 {diff[:, :3].max()}，各通道均值 {diff[:, :3].mean(axis=0).round(2)}")
+
+    # 纯色不透明像素必须一模一样 —— 这条能直接抓到红蓝互换
+    opaque = np.array([[255, 0, 0, 255], [0, 0, 255, 255]], dtype=np.uint8).tobytes()
+    ob = np.frombuffer(_unpremultiply(_premultiply(opaque, 2, 1), 2, 1), np.uint8).reshape(-1, 4)
+    check("纯红仍是红（未变成蓝）", tuple(ob[0][:3]) == (255, 0, 0), f"读回 {tuple(ob[0][:3])}")
+    check("纯蓝仍是蓝（未变成红）", tuple(ob[1][:3]) == (0, 0, 255), f"读回 {tuple(ob[1][:3])}")
+
+
+def test_file_roundtrip(tmp: Path) -> None:
+    section("2. 写盘 → 读回 颜色不变")
+    w = h = 8
+    px = bytearray()
+    for y in range(h):
+        for x in range(w):
+            px += bytes((250, 30, 60, 255)) if (x + y) % 2 == 0 else bytes((20, 220, 90, 255))
+    out = tmp / "roundtrip.xcur"
+    write_xcursor(out, {8: [(w, h, 1, 2, 100, bytes(px))]})
+    got = CursorFile.load(out, want=8).frames(8)[0]
+    a = np.frombuffer(bytes(px), np.uint8).reshape(-1, 4)
+    b = np.frombuffer(got.rgba, np.uint8).reshape(-1, 4)
+    check("像素完全一致", a.tobytes() == b.tobytes(),
+          f"最大偏差 {np.abs(a.astype(int)-b.astype(int)).max()}")
+    check("热点保留", (got.xhot, got.yhot) == (1, 2), f"({got.xhot},{got.yhot})")
+    check("延时保留", got.delay == 100, f"{got.delay}ms")
+
+
+def test_synthetic_pack(tmp: Path) -> None:
+    section("3. 合成包：.cur 解析 + .inf 映射 + 完整导入")
+    pack = make_pack(tmp / "synth-pack", n_roles=4)
+    with PackSource(pack) as ps:
+        info = ps.inspect()
+        check("用了 .inf 的权威映射", info.used_inf)
+        check("识别出 4 个角色", len(info.roles) == 4, f"{len(info.roles)} 个")
+        check("主题名取自 SCHEME_NAME", info.name == "Test-Pack", info.name)
+        by = {r.role: r for r in info.roles}
+        check("热点读对了", (by["pointer"].native == (32, 32)), str(by["pointer"].native))
+
+        res = ps.install(info, dest_root=tmp / "synth-out", sizes=(16, 32))
+        check("安装成功", res.ok, f"{res.files_written} 文件 / {res.aliases_created} 别名")
+        d = res.dest / "cursors"
+        f = CursorFile.load(d / "left_ptr", want=32).frames(32)[0]
+        arr = np.frombuffer(f.rgba, np.uint8).reshape(32, 32, 4)
+        inside = arr[10, 10]
+        check("中心像素与合成值完全一致（同时验证通道顺序）",
+              tuple(int(v) for v in inside[:3]) == (40, 200, 90),
+              f"实际 RGB={tuple(int(v) for v in inside[:3])}，期望 (40, 200, 90)")
+        check("热点按比例落在 (2,3)", (f.xhot, f.yhot) == (2, 3), f"({f.xhot},{f.yhot})")
+        # 这 4 个角色是 pointer/help/work/busy，别名要挑它们真有的
+        want_aliases = ["default", "arrow", "grab", "progress", "watch", "help"]
+        miss = [a for a in want_aliases if not (d / a).is_symlink()]
+        check("别名已建", not miss, "缺: " + ", ".join(miss) if miss else
+              f"{len(want_aliases)} 个抽查别名全部就位")
+
+
+def test_archive(tmp: Path) -> None:
+    section("4. 压缩包与文件夹结果一致")
+    pack = tmp / "synth-pack"
+    if not pack.is_dir():
+        check("合成包存在", False)
+        return
+
+    z = tmp / "pack.zip"
+    with zipfile.ZipFile(z, "w") as zf:
+        for f in pack.iterdir():
+            zf.write(f, f"nested/{f.name}")          # 故意多套一层目录
+    t = tmp / "pack.tar.gz"
+    with tarfile.open(t, "w:gz") as tf:
+        tf.add(pack, arcname="pack")
+
+    for label, src in (("zip", z), ("tar.gz", t)):
+        with PackSource(src) as ps:
+            info = ps.inspect()
+            check(f"{label}: 下钻到正确目录并识别 4 个角色", len(info.roles) == 4,
+                  f"{len(info.roles)} 个，名={info.name}")
+            check(f"{label}: 主题名正确", info.name == "Test-Pack", info.name)
+
+
+def test_name_sanitize() -> None:
+    section("5. 主题名清洗")
+    cases = [
+        ("KINOMOTO SAKURA", "KINOMOTO-SAKURA"),
+        ("Kinomoto\u2011Sakura", "Kinomoto-Sakura"),      # U+2011 断字连字符
+        ("樱花光标", "cursor-theme"),                      # 全 CJK -> 兜底
+        ("  spaced  out  ", "spaced-out"),
+        ("a", "cursor-theme"),                             # 太短 -> 兜底
+        ("Theme (v2) [dark]", "Theme-v2-dark"),
+    ]
+    for raw, want in cases:
+        got = sanitize_theme_name(raw)
+        check(f"{raw!r} → {got!r}", got == want, "" if got == want else f"期望 {want!r}")
+    check("结果里不含任何非 ASCII 字符",
+          all(all(ord(c) < 128 for c in sanitize_theme_name(r)) for r, _ in cases))
+
+
+def test_alias_table() -> None:
+    section("6. 别名表自洽")
+    seen: dict[str, str] = {}
+    clashes = []
+    for canon, aliases in ALIAS_TABLE.items():
+        for a in aliases:
+            if a in seen and seen[a] != canon:
+                clashes.append(f"{a}: {seen[a]} vs {canon}")
+            seen[a] = canon
+    check("没有别名指向两个不同光标", not clashes, "; ".join(clashes[:4]))
+    check("规范名本身没被当成别名", not [c for c in ALIAS_TABLE if c in seen])
+    required = ["default", "left_ptr", "text", "pointer", "progress", "not-allowed",
+                "ew-resize", "ns-resize", "nwse-resize", "nesw-resize",
+                "col-resize", "row-resize", "grab", "grabbing", "help"]
+    have = set(seen) | set(ALIAS_TABLE)
+    missing = [n for n in required if n not in have]
+    check("常用名字全部覆盖", not missing, "缺: " + ", ".join(missing) if missing else "")
+
+
+def test_real_pack(tmp: Path) -> None:
+    pack = find_real_pack()
+    if pack is None:
+        section("7. 真实光标包（未找到，跳过）")
+        print("      设置 CURSORKIT_TEST_PACK=<目录> 可启用")
+        return
+
+    section(f"7. 真实光标包：{pack.name}")
+    with PackSource(pack) as ps:
+        info = ps.inspect()
+        check("用 .inf 识别出 17 个角色", len(info.roles) == 17, f"{len(info.roles)} 个")
+        check("没有未识别的文件", not info.unmapped, str([f.name for f in info.unmapped][:3]))
+        check("全部是动画光标", info.animated_count == len(info.roles),
+              f"{info.animated_count}/{len(info.roles)}")
+        native = info.native_sizes
+        check("原始分辨率为 256×256", native == [(256, 256)], str(native))
+
+        res = ps.install(info, dest_root=tmp / "real-out", sizes=(24, 48, 96))
+        check("安装成功", res.ok, f"{res.files_written} 文件 / {res.aliases_created} 别名")
+
+        # 热点缩放：源热点 @256 折回后应与产物一致
+        bad = []
+        for r in info.roles:
+            frames, _ = load_windows_cursor(r.file)
+            s = frames[0]
+            cf = CursorFile.load(res.dest / "cursors" / r.canonical)
+            f96 = cf.frames(96)[0]
+            if abs(round(f96.xhot * 256 / 96) - s.hotspot_x) > 2 or \
+               abs(round(f96.yhot * 256 / 96) - s.hotspot_y) > 2:
+                bad.append(r.canonical)
+        check("所有热点缩放正确", not bad, "偏差: " + ", ".join(bad) if bad else "")
+
+        # 颜色：产物中心区域的色相应与源一致（抓红蓝互换）
+        mismatched = []
+        for r in info.roles[:6]:
+            src_frames, _ = load_windows_cursor(r.file)
+            s_arr = np.frombuffer(src_frames[0].rgba, np.uint8).reshape(
+                src_frames[0].height, src_frames[0].width, 4)
+            m = s_arr[..., 3] > 200
+            if m.sum() < 50:
+                continue
+            src_mean = s_arr[..., :3][m].mean(axis=0)
+            cf = CursorFile.load(res.dest / "cursors" / r.canonical, want=96)
+            f = cf.frames(96)[0]
+            d_arr = np.frombuffer(f.rgba, np.uint8).reshape(f.height, f.width, 4)
+            dm = d_arr[..., 3] > 200
+            if dm.sum() < 20:
+                continue
+            dst_mean = d_arr[..., :3][dm].mean(axis=0)
+            # 通道顺序错了的话，R 和 B 的均值会明显对不上
+            if abs(dst_mean[0] - src_mean[0]) > 25 or abs(dst_mean[2] - src_mean[2]) > 25:
+                mismatched.append(f"{r.canonical}(源{src_mean.round(0)}/产{dst_mean.round(0)})")
+        check("颜色通道顺序正确（无红蓝互换）", not mismatched,
+              "; ".join(mismatched[:3]) if mismatched else "抽查 6 个角色")
+
+        # 关键别名可解析
+        d = res.dest / "cursors"
+        need = ["default", "text", "pointer", "progress", "not-allowed",
+                "ew-resize", "ns-resize", "nwse-resize", "nesw-resize", "help"]
+        miss = [n for n in need if not (d / n).exists()]
+        check("常用别名全部在产物里", not miss, "缺: " + ", ".join(miss) if miss else "")
+
+        # index.theme 正确
+        idx = (res.dest / "index.theme").read_text(encoding="utf-8")
+        check("index.theme 有 Name 和 Inherits",
+              f"Name={info.name}" in idx and "Inherits=" in idx, idx.replace("\n", " | "))
+
+
+def main() -> int:
+    print("导入器自检\n" + "=" * 60)
+    with tempfile.TemporaryDirectory(prefix="cursorkit-selftest-") as td:
+        tmp = Path(td)
+        test_roundtrip(tmp)
+        test_file_roundtrip(tmp)
+        test_synthetic_pack(tmp)
+        test_archive(tmp)
+        test_name_sanitize()
+        test_alias_table()
+        test_real_pack(tmp)
+
+    print("\n" + "=" * 60)
+    if FAILURES:
+        print(f"\033[31m{len(FAILURES)}/{CHECKS} 项失败:\033[0m")
+        for f in FAILURES:
+            print("   -", f)
+        return 1
+    print(f"\033[32m全部 {CHECKS} 项检查通过\033[0m")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

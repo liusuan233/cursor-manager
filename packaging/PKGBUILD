@@ -1,0 +1,81 @@
+# Maintainer: liusuan233
+#
+# 构建前先把源码包放到本目录：
+#     make pkg          # 会自动做完 dist + 拷贝 tarball + makepkg -si
+#
+# 或者手动：
+#     make dist && cp dist/cursor-manager-*.tar.gz packaging/ && cd packaging
+#     makepkg -si
+#
+# 关于构建方式：这里用 pip wheel / pip install --root，因为只需要
+# python-pip + python-setuptools + python-wheel（绝大多数系统都已装），
+# 离线也能打。Arch 官方推荐的是 python-build + python-installer 那条路，
+# 想换成那样的话，把 makedepends 和 build()/package() 换掉即可。
+
+pkgname=cursor-manager
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="鼠标光标主题管理器：浏览、动画预览、切换、导入 Windows 光标包（niri / Wayland）"
+arch=('any')
+url="https://github.com/liusuan233/cursor-manager"
+license=('MIT')
+depends=('python' 'python-gobject' 'gtk4' 'glib2' 'python-numpy' 'python-pillow'
+         'hicolor-icon-theme')
+makedepends=('python-pip' 'python-setuptools' 'python-wheel')
+# 自检用，不影响运行
+checkdepends=()
+# 声明本包提供的 Python 模块名，namcap 才能解析包内部的 import
+provides=('cursor-manager' 'python-cursorkit')
+conflicts=()
+source=("$pkgname-$pkgver.tar.gz")
+sha256sums=('SKIP')          # 本地源码包，不做校验；发布时请替换成真实值
+
+build() {
+    cd "$srcdir/$pkgname-$pkgver"
+    # --no-build-isolation：用系统已装的 setuptools，不联网拉构建依赖
+    python -m pip wheel --no-deps --no-build-isolation --wheel-dir=dist .
+}
+
+check() {
+    cd "$srcdir/$pkgname-$pkgver"
+    # GUI 自检需要显示服务器，打包机通常没有，所以只跑纯逻辑的那个
+    python selftest_import.py
+}
+
+package() {
+    cd "$srcdir/$pkgname-$pkgver"
+
+    # --no-compile：pip 的 --compile 会把 $pkgdir 这个构建路径写进 .pyc 的
+    # co_filename 里（namcap 会警告 "包含对 $pkgdir 的引用"）。所以先不编译，
+    # 等下用 -d 指定最终安装路径重新编译一次。
+    python -m pip install --no-deps --no-build-isolation --no-compile \
+        --root="$pkgdir" --prefix=/usr --root-user-action=ignore dist/*.whl
+
+    local _pysite
+    _pysite=$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
+
+    # 用最终安装路径编译字节码。
+    # 注意 -d 的语义是"拼在【编译根目录】的相对路径前面"，所以编译根是
+    # .../site-packages/cursorkit 时，-d 必须给 .../site-packages/cursorkit，
+    # 只给 .../site-packages 会得到缺一层的错误路径（traceback 指向不存在的文件）。
+    python -m compileall -q -d "$_pysite/cursorkit" --invalidation-mode unchecked-hash \
+        "$pkgdir$_pysite/cursorkit"
+
+    # pip 记录"从哪装的"，是构建机的路径，对成品毫无用处
+    rm -f "$pkgdir$_pysite"/*.dist-info/direct_url.json
+
+    install -Dm644 packaging/cursor-manager.desktop \
+        "$pkgdir/usr/share/applications/cursor-manager.desktop"
+
+    local s
+    for s in 32 48 64 128 256; do
+        install -Dm644 "icons/cursor-manager-$s.png" \
+            "$pkgdir/usr/share/icons/hicolor/${s}x${s}/apps/cursor-manager.png"
+    done
+
+    install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+    install -Dm644 DIAGNOSIS.md "$pkgdir/usr/share/doc/$pkgname/DIAGNOSIS.md"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+
+    chmod 755 "$pkgdir/usr/bin/cursor-manager"
+}

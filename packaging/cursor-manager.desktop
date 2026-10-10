@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Cursor Theme Manager
+Name[zh_CN]=光标主题管理器
+Comment=Manage mouse cursor themes for niri / Wayland
+Comment[zh_CN]=管理 niri / Wayland 下的鼠标光标主题（niri、DMS、GTK、XWayland 一并生效）
+# 打包安装时命令在 /usr/bin 里，直接用命令名最稳
+Exec=cursor-manager
+Icon=cursor-manager
+Terminal=false
+Categories=Settings;DesktopSettings;GTK;
+Keywords=cursor;mouse;pointer;theme;niri;wayland;
+Keywords[zh_CN]=光标;鼠标;指针;主题;niri;wayland;
+StartupNotify=true

@@ -1,0 +1,31 @@
+# sdist 里要带上的非 Python 文件。
+# 只影响源码包内容，不影响 wheel。
+include README.md
+include DIAGNOSIS.md
+include LICENSE
+include pyproject.toml
+include Makefile
+
+# 从源码目录直接运行的入口和辅助脚本
+include cursor-manager
+include set-cursor.sh
+include install.sh
+include install-kinomoto-cursor.sh
+
+# 自检 / 工具
+include selftest_gui.py
+include selftest_import.py
+include xcursor_tool.py
+include verify_cursor.c
+
+# 自检素材、图标、文档、打包文件
+recursive-include _selftest_pack *
+recursive-include icons *.png
+recursive-include docs *.md *.png *.py
+recursive-include packaging *
+include .gitignore
+
+global-exclude __pycache__
+global-exclude *.py[cod]
+global-exclude *.bak.*
+exclude preview/*

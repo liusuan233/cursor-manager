@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cursor-manager"
+dynamic = ["version"]
+description = "鼠标光标主题管理器：浏览 / 预览 / 切换 / 导入（niri、Wayland、GTK、XWayland）"
+readme = "README.md"
+requires-python = ">=3.10"
+
+# 注意：这个 license 是占位值，按你的实际意愿改。
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "liusuan233" }]
+keywords = ["cursor", "mouse", "theme", "wayland", "niri", "xcursor", "ani", "gtk4"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: X11 Applications :: GTK",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Desktop Environment",
+    "Topic :: System :: Systems Administration",
+]
+
+# 这两个都是纯 wheel，任何平台都能直接装。
+# 没有它们也能跑（有纯 Python 回退），但性能和解码覆盖面会下降。
+dependencies = [
+    "numpy>=1.20",
+    "pillow>=9.0",
+]
+
+[project.optional-dependencies]
+# PyGObject 几乎不可能用 pip 装成功（要系统库 + 编译），
+# 所以放在可选组里 —— 用发行版的包管理器装：
+#   Arch:   sudo pacman -S python-gobject gtk4
+#   Debian: sudo apt install python3-gi gir1.2-gtk-4.0
+gui = ["PyGObject>=3.42"]
+
+[project.scripts]
+cursor-manager = "cursorkit.__main__:main"
+
+[tool.setuptools]
+packages = ["cursorkit"]
+
+[tool.setuptools.dynamic]
+version = { attr = "cursorkit.__version__" }

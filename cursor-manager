@@ -1,0 +1,16 @@
+#!/usr/bin/env python3
+"""从源码目录直接运行 cursor-manager。
+
+真正实现在 cursorkit/ 包里；安装之后由 console_scripts 提供同名的
+`cursor-manager` 命令，就不再需要这个文件了。
+"""
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from cursorkit.__main__ import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main())
