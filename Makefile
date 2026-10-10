@@ -16,7 +16,8 @@ SOURCES := cursorkit \
            pyproject.toml MANIFEST.in Makefile .gitignore \
            README.md DIAGNOSIS.md LICENSE
 
-.PHONY: help check test dist sdist wheel install uninstall pip-install pkg verify clean
+.PHONY: help check test dist sdist wheel install uninstall pip-install \
+        pkg pkg-install verify release _release_verify clean
 
 help:
 	@echo "cursor-manager $(VERSION) —— 打包与安装"
@@ -24,8 +25,11 @@ help:
 	@echo "  make dist        打源码 tarball（含全部脚本、图标、自检素材）"
 	@echo "  make sdist       Python 源码包（pip 用）"
 	@echo "  make wheel       Python wheel"
-	@echo "  make pkg         Arch 包（dist + makepkg -si）"
+	@echo "  make pkg         Arch 包（只构建）"
+	@echo "  make pkg-install Arch 包并安装（sudo pacman -U）"
 	@echo "  make verify      把 wheel 装进临时 venv 并跑起来，验证导出可用"
+	@echo ""
+	@echo "  make release     打完整发布包并逐项实测（源码包 + wheel + Arch 包 + SHA256SUMS）"
 	@echo ""
 	@echo "  make install     用户级安装（~/.local，自动探测 PATH 配置）"
 	@echo "  make uninstall   卸载上面的安装"
@@ -101,7 +105,12 @@ pip-install:
 
 pkg: dist
 	@cp $(TARBALL) packaging/
-	@cd packaging && makepkg -si
+	@cd packaging && makepkg -f --nodeps --nocheck
+	@echo "→ packaging/$$(cd packaging && ls *.pkg.tar.zst | head -1)"
+
+# 构建并安装（会调 sudo pacman -U）
+pkg-install: pkg
+	@sudo pacman -U --noconfirm packaging/*.pkg.tar.zst
 
 # 真装一遍，证明"导出"出来的东西是可用的
 # 注意 wheel 文件名里项目名的 '-' 会被规范化成 '_'（PEP 427）
@@ -127,6 +136,71 @@ verify: wheel
 	    'print(f"  角色表 {len(ROLES)} 项；numpy 加速={_np is not None}")')"
 	@rm -rf $(DISTDIR)/venv
 	@printf '\033[32m✔ 导出验证通过\033[0m\n'
+
+# ---------------------------------------------------------------- 发布
+
+RELDIR   := $(DISTDIR)/release
+SHAFILE  := $(RELDIR)/SHA256SUMS
+TAG      := v$(VERSION)
+
+# 打一个完整的发布包：源码包 + wheel + Arch 包 + 校验和，并逐项实测
+release:
+	@# 1. 版本号必须三处一致，否则发出去的包对不上号
+	@test "$$(grep -oP '^pkgver=\K.*' packaging/PKGBUILD)" = "$(VERSION)" || { \
+	    echo "\033[31m✘ PKGBUILD 的 pkgver 与 cursorkit.__version__ ($(VERSION)) 不一致\033[0m"; exit 1; }
+	@# 2. 工作区必须干净 —— 保证产物对应某个确定的提交
+	@test -z "$$(git status --porcelain 2>/dev/null)" || { \
+	    echo "\033[31m✘ 工作区不干净，先提交再发版:\033[0m"; git status --short; exit 1; }
+	@$(MAKE) --no-print-directory clean >/dev/null
+	@mkdir -p $(RELDIR)
+	@echo "\033[36m==>\033[0m 构建源码包 / wheel / Arch 包"
+	@$(MAKE) --no-print-directory dist >/dev/null
+	@$(MAKE) --no-print-directory wheel >/dev/null
+	@cp $(TARBALL) packaging/ && cd packaging && makepkg -f --nodeps --nocheck >/dev/null 2>&1
+	@cp $(TARBALL) $(RELDIR)/
+	@cp $(DISTDIR)/cursor_manager-$(VERSION)-*.whl $(RELDIR)/
+	@cp packaging/*.pkg.tar.zst $(RELDIR)/
+	@rm -f packaging/$(NAME)-$(VERSION).tar.gz
+	@echo ""
+	@echo "\033[36m==>\033[0m 生成校验和"
+	@cd $(RELDIR) && sha256sum * > SHA256SUMS && cat SHA256SUMS | sed 's/^/    /'
+	@echo ""
+	@echo "\033[36m==>\033[0m 实测每个产物"
+	@$(MAKE) --no-print-directory _release_verify
+	@echo ""
+	@printf '\033[32m✔ 发布包就绪: %s\033[0m\n' "$(RELDIR)"
+	@echo ""
+	@echo "下一步（推 tag 并上传）:"
+	@echo "    git tag -a $(TAG) -m '$(TAG)'"
+	@echo "    git push origin $(TAG)"
+	@echo "    gh release create $(TAG) --title '$(TAG)' --notes-file docs/RELEASE-$(TAG).md $(RELDIR)/*"
+
+_release_verify:
+	@rm -rf $(DISTDIR)/rv && mkdir -p $(DISTDIR)/rv
+	@# a) 源码包解包即用
+	@tar -xzf $(RELDIR)/$(NAME)-$(VERSION).tar.gz -C $(DISTDIR)/rv
+	@$(DISTDIR)/rv/$(NAME)-$(VERSION)/cursor-manager --version | sed 's/^/  ✓ 源码包解包: /'
+	@# b) 源码包能被 pip 直接装（pip 要求 tar 内是单一顶层目录）
+	@$(PY) -m venv $(DISTDIR)/rv/venv-src
+	@$(DISTDIR)/rv/venv-src/bin/pip install --quiet --no-deps $(RELDIR)/$(NAME)-$(VERSION).tar.gz
+	@$(DISTDIR)/rv/venv-src/bin/cursor-manager --version | sed 's/^/  ✓ 源码包 pip 安装: /'
+	@# c) wheel 能装能跑
+	@$(PY) -m venv $(DISTDIR)/rv/venv-whl
+	@$(DISTDIR)/rv/venv-whl/bin/pip install --quiet --no-deps $(RELDIR)/cursor_manager-$(VERSION)-*.whl
+	@$(DISTDIR)/rv/venv-whl/bin/cursor-manager --version | sed 's/^/  ✓ wheel 安装: /'
+	@# d) Arch 包结构完整
+	@mkdir -p $(DISTDIR)/rv/arch
+	@bsdtar -xf $(RELDIR)/$(NAME)-$(VERSION)-1-any.pkg.tar.zst -C $(DISTDIR)/rv/arch
+	@test -f "$(DISTDIR)/rv/arch/usr/bin/cursor-manager" \
+	    && echo "  ✓ Arch 包: /usr/bin/cursor-manager" \
+	    || { echo "  \033[31m✘ Arch 包缺少主程序\033[0m"; exit 1; }
+	@test -f "$(DISTDIR)/rv/arch/usr/share/applications/cursor-manager.desktop" \
+	    && echo "  ✓ Arch 包: 桌面入口"
+	@test -f "$(DISTDIR)/rv/arch/usr/share/licenses/cursor-manager/LICENSE" \
+	    && echo "  ✓ Arch 包: 许可证文件"
+	@# e) 校验和自检
+	@cd $(RELDIR) && sha256sum -c SHA256SUMS >/dev/null && echo "  ✓ SHA256SUMS 全部匹配"
+	@rm -rf $(DISTDIR)/rv
 
 # ---------------------------------------------------------------- 清理
 
