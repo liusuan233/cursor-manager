@@ -77,12 +77,23 @@ def main() -> int:
         rows = rows_of(win.theme_list)
         check("主题列表非空", len(rows) > 0, f"{len(rows)} 行")
         names = [r.theme.name for r in rows]
-        check("包含 Kinomoto-Sakura", "Kinomoto-Sakura" in names, ", ".join(names[:5]))
-        check("坏的主题也在列表里", any(not r.theme.valid for r in rows))
+
+        # 不要硬编码主题名 —— 用户随时可能换主题，写死会让自检莫名其妙地失败。
+        # 改为从实际状态里读出"当前生效的是哪个"，再断言界面选中了它。
+        state_now = cm.read_state()
+        active = state_now.get("niri") or state_now.get("gtk3") or ""
+        valid_names = [r.theme.name for r in rows if r.theme.valid]
+        state["active"] = active if active in valid_names else (valid_names[0] if valid_names else "")
+        check("有可用的主题", bool(valid_names), ", ".join(valid_names[:4]))
+        print(f"      当前生效: {active or '（读不到）'}   自检将使用: {state['active']}")
+        check("坏的主题（缺 cursors/）也在列表里并被标红",
+              any(not r.theme.valid for r in rows),
+              next((r.theme.name for r in rows if not r.theme.valid), "本机没有这样的主题"))
 
         sel = win.theme_list.get_selected_row()
-        check("自动选中当前生效的主题", sel is not None and sel.theme.name == "Kinomoto-Sakura",
-              sel.theme.name if sel else "无")
+        check("自动选中当前生效的主题",
+              sel is not None and sel.theme.name == state["active"],
+              f"选中 {sel.theme.name if sel else '无'}，期望 {state['active']}")
         pump(1200, phase2)
 
     def phase2():
@@ -172,13 +183,18 @@ def main() -> int:
         win = state["win"]
         print("\n=== 9. 状态栏 ===")
         txt = win.status.get_text()
-        check("状态栏显示当前生效主题", "Kinomoto-Sakura" in txt, txt[:100])
+        check("状态栏显示当前生效主题", state["active"] in txt, txt[:100])
+        check("状态栏同时给出各处是否一致", "一致" in txt)
 
         print("\n=== 10. 干跑应用（不写盘） ===")
         from cursorkit import apply_theme
-        res = apply_theme("Kinomoto-Sakura", 24, dry_run=True)
+        # 必须 dry_run=True —— 自检绝不能改用户真实的光标配置
+        res = apply_theme(state["active"], 24, dry_run=True)
         check("六个配置点全部就绪", len(res.reports) == 6, f"{len(res.reports)} 项")
         check("干跑全部成功", res.ok)
+        check("干跑确实没写盘（报告里都标了试运行/跳过）",
+              all("试运行" in r.detail or r.skipped for r in res.reports),
+              "; ".join(r.detail for r in res.reports if "试运行" not in r.detail and not r.skipped) or "全部标记正确")
         pump(200, phase8)
 
     def phase8():

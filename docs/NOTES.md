@@ -149,6 +149,45 @@ tarball 从 96K 涨到 1.3M，里面出现 `packaging/src/cursor-manager-1.0.0/p
 
 ---
 
+## 测试时踩的坑
+
+### `HOME=假目录` 隔离不了 gsettings
+
+想在不碰用户真实配置的前提下测试 `apply`，第一反应是 `HOME=/tmp/fake ./cursor-manager apply ...`。
+文件路径确实隔离了（`apply.py` 里的路径都在 import 时由 `Path.home()` 算出来），
+**但 gsettings 没有**。
+
+原因：dconf 是会话总线上的服务在写，客户端只是通过 D-Bus 把变更发过去，
+真正落盘的是那个**已经用真实环境启动的** `dconf-service`。
+所以 `HOME` 改了也没用 —— 用户的真实 `~/.config/dconf/user` 被改了。
+
+更坑的是它**不会报错**，看起来一切正常，直到你发现真实系统的
+`org.gnome.desktop.interface cursor-theme` 变成了测试里用的那个值。
+
+**教训**：测试 `apply` 一律加 `--dry-run`。需要验证真实写入时，
+用一次性容器或明确接受会改动本机配置。
+
+`selftest_gui.py` 里的干跑检查现在还顺带断言"报告里每一项都标了『试运行』或『跳过』"，
+就是防止哪天有人把 `dry_run=True` 去掉。
+
+### 自检里别硬编码主题名
+
+原来的 `selftest_gui.py` 断言"自动选中的是 Kinomoto-Sakura"。用户把主题换成
+`Breeze_Light` 之后，自检立刻报两项失败 —— 但代码一行没改，是**断言本身不成立**。
+
+现在改成先从 `read_state()` 读出"当前实际生效的主题"，再断言界面选中了它。
+副作用是自检覆盖的主题形态变多了：`Breeze_Light` 有 47 个光标且**全是静态的**
+（不像 Kinomoto-Sakura 那样 20 个光标全带动画），正好补上了另一条代码路径。
+
+### 别在没有 niri 的机器上凭空建目录
+
+`set_dms_cursor_kdl()` 原来无条件 `mkdir -p ~/.config/niri/dms/` 再写文件。
+GNOME / KDE / X11 用户跑一次 `apply`，家目录里就多出一个 `~/.config/niri/`。
+
+现在会先判断 `~/.config/niri/` 是否存在，不存在就跳过并在报告里标 `○`。
+
+---
+
 ## 本项目最初的排查记录
 
 见 [`DIAGNOSIS.md`](../DIAGNOSIS.md)：一个 Windows 光标包在 niri 上怎么设都不生效，

@@ -308,17 +308,62 @@ XCURSOR_PATH=/path/to/icons ./verify_cursor MyTheme
 
 ---
 
-## 环境要求
+## 环境要求与平台支持
 
-- Linux + Wayland（niri、DMS 为最佳适配；GNOME/KDE 也能用 `apply` 的部分功能）
-- Python 3.10+
-- PyGObject + GTK4（仅 GUI 需要，CLI 不需要）
-- numpy（可选，装了快很多；没装自动退回纯 Python 解码）
-- Pillow（可选但强烈建议：解码非 32bpp 光标、高质量缩放）
+**一句话：Linux 桌面工具，核心功能与桌面环境无关，但"一键应用"写哪些配置取决于你用哪个桌面。**
+
+### 功能 × 平台
+
+| 功能 | 依赖 | 支持范围 |
+|---|---|---|
+| 浏览主题、动画预览 | Python + Xcursor 解码 | **任何 Linux**，不挑桌面 |
+| 导入 Windows 光标包 | 同上 | **任何 Linux**，不挑桌面 |
+| 命令行（`--list` / `--import` / `apply`） | Python | **任何 Linux**，**不需要 GTK** |
+| 图形界面 | GTK4 + PyGObject | 任何装了 GTK4 的 Linux |
+| **一键应用** | 见下表 | **取决于桌面环境** |
+
+### 「一键应用」写到哪
+
+`apply` 会依次尝试 6 个位置，**不存在的自动跳过**（可以在无 niri 的机器上放心跑，不会乱建目录）：
+
+| 位置 | 管谁 | 谁需要它 |
+|---|---|---|
+| `~/.config/niri/config.kdl` | niri 自己画的光标 | niri |
+| `~/.config/niri/dms/cursor.kdl` | DMS 外壳 | niri + DMS |
+| `~/.config/gtk-{3.0,4.0}/settings.ini` | GTK3 / GTK4 应用 | 几乎所有桌面 |
+| `~/.Xresources` | XWayland / X11 应用 | 有 XWayland 或纯 X11 |
+| `gsettings org.gnome.desktop.interface` | 走 GSettings 的程序 | GNOME、Cinnamon 等 |
+
+| 桌面环境 | 一键应用 | 说明 |
+|---|---|---|
+| **niri + DMS** | ✅ **全部 6 处** | 开发与测试环境，完整验证过 |
+| niri（无 DMS） | ✅ 5 处 | DMS 那份写了也不会被读 |
+| GNOME | 🟡 GTK + gsettings | 生效；`XCURSOR_THEME` 类程序需自行设置 |
+| KDE Plasma | 🟡 GTK + XWayland | **不写 `kcminputrc`**，KDE 原生应用要去系统设置里选 |
+| sway / Hyprland / river 等 | 🟡 GTK + XWayland + gsettings | 合成器自己的光标配置需在它自己的配置文件里设 `XCURSOR_THEME` |
+| X11（任意 WM / 桌面） | 🟡 GTK + `.Xresources` | 这两个是 X11 下的主力 |
+| macOS / Windows | ❌ | 不适用 —— Xcursor 是 Linux/BSD 的光标格式 |
+
+<sub>✅ = 完整验证过；🟡 = 能装能用、相关配置会写，但没覆盖该桌面的全部设置项（欢迎提 PR）。</sub>
+
+浏览和导入功能在任何 Linux 上都能用，包括无图形界面的服务器（`--list` 不需要 GTK）。
+
+### 软件依赖
+
+- **Python 3.10+** —— 门槛来自 `@dataclass(slots=True)`（3.10 引入）
+- **PyGObject + GTK4** —— 仅图形界面需要
+- **numpy**（可选）—— 装了预览和解码快很多；没装自动退回纯 Python 实现
+- **Pillow**（可选但强烈建议）—— 解码非 32bpp 的老式 `.cur`、以及高质量缩放需要它
 
 ```bash
-sudo pacman -S python-gobject gtk4 python-numpy python-pillow
+sudo pacman -S python-gobject gtk4 python-numpy python-pillow   # Arch
+sudo apt install python3-gi gir1.2-gtk-4.0 python3-numpy python3-pil  # Debian/Ubuntu
+sudo dnf install python3-gobject gtk4 python3-numpy python3-pillow    # Fedora
 ```
+
+> **注意**：Arch 包是按**当前 Python 版本**编译的（安装到
+> `/usr/lib/python3.X/site-packages`）。Arch 滚动更新换 Python 大版本后需要重新构建；
+> 源码包不受影响。
 
 ---
 
