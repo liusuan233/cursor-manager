@@ -13,7 +13,7 @@
 # 想换成那样的话，把 makedepends 和 build()/package() 换掉即可。
 
 pkgname=cursor-manager
-pkgver=1.0.0
+pkgver=1.0.1
 pkgrel=1
 pkgdesc="鼠标光标主题管理器：浏览、动画预览、切换、导入 Windows 光标包（niri / Wayland）"
 arch=('any')
