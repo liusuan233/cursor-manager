@@ -41,7 +41,14 @@ ICON_TYPE_CUR = 2
 
 @dataclass(slots=True)
 class IconEntry:
-    """ICONDIR 里的一个条目。"""
+    """ICONDIR 里的一个条目。
+
+    注意 bpp 字段的语义随容器类型而变：
+      · ICO(type=1)：wBitCount 就是**位深**
+      · CUR(type=2)：wPlanes 和 wBitCount 被**复用成热点坐标**
+        （wPlanes=热点X，wBitCount=热点Y）—— 所以此时 bpp 不是位深。
+    真正的位深得从 DIB 头里读（见 decode_dib）。
+    """
 
     width: int
     height: int
@@ -113,32 +120,96 @@ def extract_single_entry(data: bytes, entry: IconEntry, itype: int) -> bytes:
     return bytes(out)
 
 
-def _decode_dib_32bpp(image: bytes, width: int, height: int) -> bytes | None:
-    """不依赖 Pillow 的 32bpp BGRA 解码（含 AND 掩码兜底）。"""
+def decode_dib(image: bytes) -> tuple[int, int, int, bytes] | None:
+    """解码 CUR/ICO 里的 DIB，返回 (width, height, bpp, rgba)；不支持时返回 None。
+
+    自己写而不用 Pillow 的原因：**Pillow 对 8bpp 调色板图像（mode=P）不会应用
+    AND 掩码**，会把整个光标变成不透明的黑底方块。而 8bpp / 24bpp 的调色板光标
+    在老式 Windows 光标包里非常普遍 —— 用户导入「初音未来」主题时踩到的就是这个。
+
+    只处理无压缩（BI_RGB）和 BI_BITFIELDS；RLE 之类交给调用方退回 Pillow。
+    """
     if len(image) < 40:
         return None
-    (header_size, w, h2, planes, bpp, compression) = struct.unpack_from("<IiiHHI", image, 0)
-    if header_size < 40 or compression != 0 or bpp != 32:
+
+    header_size, w, h2, _planes, bpp, compression = struct.unpack_from("<IiiHHI", image, 0)
+    if header_size < 40 or compression not in (0, 3):
         return None
-    h = abs(h2) // 2               # DIB 高度是 XOR+AND 两倍
-    if width <= 0 or h <= 0 or w not in (width, -width):
+    if bpp not in (1, 4, 8, 24, 32):
+        return None
+    if not (0 < w <= 1024) or h2 == 0:
         return None
 
-    stride = width * 4
-    need = 40 + stride * h
-    if len(image) < need:
+    top_down = h2 < 0
+    h = abs(h2) // 2                     # DIB 高度 = XOR 位图 + AND 掩码，两倍
+    if not (0 < h <= 1024):
         return None
 
-    xor = image[40 : 40 + stride * h]
-    rgba = bytearray(width * h * 4)
+    # 调色板紧跟在头之后，每项 4 字节（B, G, R, 保留）
+    palette: list[tuple[int, int, int]] = []
+    if bpp <= 8:
+        n_colors = 1 << bpp
+        clr_used = struct.unpack_from("<I", image, 32)[0]
+        if clr_used:
+            n_colors = min(clr_used, 1 << bpp)
+        pal_off = header_size
+        if pal_off + n_colors * 4 > len(image):
+            return None
+        for i in range(n_colors):
+            b, g, r, _ = image[pal_off + i * 4 : pal_off + i * 4 + 4]
+            palette.append((r, g, b))
+        xor_off = pal_off + n_colors * 4
+    else:
+        xor_off = header_size
+
+    xor_stride = ((w * bpp + 31) // 32) * 4
+    mask_stride = ((w + 31) // 32) * 4
+    xor_len = xor_stride * h
+    if xor_off + xor_len > len(image):
+        return None
+    xor = image[xor_off : xor_off + xor_len]
+    mask = image[xor_off + xor_len : xor_off + xor_len + mask_stride * h]
+    has_mask = len(mask) >= mask_stride * h
+
+    # 32bpp 且有真实 alpha 通道时，以 alpha 为准（Windows 行为，AND 掩码忽略）。
+    # 但有些包把 32bpp 的 alpha 全填 0、只用 AND 掩码 —— 这时把掩码当作透明来源。
+    use_mask = has_mask
+    if bpp == 32 and has_mask:
+        alphas = xor[3::4]
+        if any(alphas):                  # 有真实 alpha
+            use_mask = False
+
+    out = bytearray(w * h * 4)
     for y in range(h):
-        src_y = h - 1 - y                       # DIB 自下而上
-        for x in range(width):
-            si = src_y * stride + x * 4
-            b, g, r, a = xor[si], xor[si + 1], xor[si + 2], xor[si + 3]
-            di = (y * width + x) * 4
-            rgba[di : di + 4] = bytes((r, g, b, a))
-    return bytes(rgba)
+        src_y = y if top_down else (h - 1 - y)
+        row = xor[src_y * xor_stride : (src_y + 1) * xor_stride]
+        mrow = mask[src_y * mask_stride : (src_y + 1) * mask_stride] if use_mask else b""
+        for x in range(w):
+            if bpp == 32:
+                si = x * 4
+                # DIB 里是 B,G,R,A —— 第一个字节是蓝不是红
+                b, g, r, a = row[si], row[si + 1], row[si + 2], row[si + 3]
+            elif bpp == 24:
+                si = x * 3
+                b, g, r = row[si], row[si + 1], row[si + 2]
+                a = 255
+            else:
+                if bpp == 8:
+                    idx = row[x]
+                elif bpp == 4:
+                    idx = (row[x // 2] >> (4 if x % 2 == 0 else 0)) & 0x0F
+                else:                    # 1bpp
+                    idx = (row[x // 8] >> (7 - x % 8)) & 1
+                r, g, b = palette[idx] if idx < len(palette) else (0, 0, 0)
+                a = 255
+
+            if use_mask and (mrow[x // 8] >> (7 - x % 8)) & 1:
+                a = 0
+
+            di = (y * w + x) * 4
+            out[di : di + 4] = bytes((r, g, b, a))
+
+    return w, h, bpp, bytes(out)
 
 
 @dataclass(slots=True)
@@ -154,37 +225,37 @@ class DecodedImage:
 def decode_cur_image(data: bytes, pick: str = "best") -> DecodedImage:
     """解码 .cur/.ico 的一个条目。
 
-    pick: 'best' 取最大（像素最多的）条目，'all' 不支持（用 iter_cur_images）
-    像素解码优先用 Pillow（各种位深都覆盖），没有 Pillow 时退回内置 32bpp 解码器。
+    解码顺序：**先用自己的 decode_dib**（正确处理 8/24bpp 的 AND 掩码），
+    只有遇到它处理不了的编码（RLE 压缩等）才退回 Pillow。
+    反过来的话，调色板光标会变成不透明的黑底方块 —— Pillow 对 mode=P 不套掩码。
     """
     itype, entries = parse_icondir(data)
     if not entries:
         raise CursorParseError("没有任何图标条目")
 
-    entry = max(entries, key=lambda e: (e.pixels, e.bpp))
-    single = extract_single_entry(data, entry, itype)
+    entry = max(entries, key=lambda e: e.pixels)
+    raw_image = data[entry.offset : entry.offset + entry.size]
 
-    rgba = None
+    got = decode_dib(raw_image)
+    if got is not None:
+        w, h, bpp, rgba = got
+        return DecodedImage(w, h, entry.hotspot_x, entry.hotspot_y, rgba, bpp)
+
+    # 后备：Pillow（能处理 RLE 等冷门编码，但对调色板图像不套 AND 掩码）
     if Image is not None:
         try:
+            single = extract_single_entry(data, entry, itype)
             with Image.open(io.BytesIO(single)) as im:
                 im = im.convert("RGBA")
-                rgba = im.tobytes()
-                entry_w, entry_h = im.size
+                return DecodedImage(im.size[0], im.size[1], entry.hotspot_x,
+                                    entry.hotspot_y, im.tobytes(), 32)
         except Exception:
-            rgba = None
+            pass
 
-    if rgba is None:
-        raw = _decode_dib_32bpp(data[entry.offset : entry.offset + entry.size], entry.width, entry.height)
-        if raw is None:
-            raise CursorParseError(
-                f"无法解码 {entry.width}x{entry.height} {entry.bpp}bpp 的图标"
-                + ("（装个 Pillow 可以覆盖更多位深: pip install pillow）" if Image is None else "")
-            )
-        rgba = raw
-        entry_w, entry_h = entry.width, entry.height
-
-    return DecodedImage(entry_w, entry_h, entry.hotspot_x, entry.hotspot_y, rgba, entry.bpp)
+    raise CursorParseError(
+        f"无法解码 {entry.width}x{entry.height} 的图标（不支持的位深或压缩方式）"
+        + ("；装个 Pillow 可以覆盖更多格式: pip install pillow" if Image is None else "")
+    )
 
 
 # ---------------------------------------------------------------------------

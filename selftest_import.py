@@ -79,6 +79,41 @@ def make_cur(width: int, height: int, rgba: bytes, hx: int, hy: int) -> bytes:
     return struct.pack("<HHH", 0, 2, 1) + entry + dib
 
 
+def make_cur_8bpp(width: int, height: int, palette: list[tuple[int, int, int]],
+                  indices: list[int], transparent: set[tuple[int, int]],
+                  hx: int = 0, hy: int = 0) -> bytes:
+    """手搓一个 8bpp 调色板 .cur，**透明度只放在 AND 掩码里**（没有 alpha 通道）。
+
+    这正是「初音未来」那类老式光标包的格式，也是曾经把整张图变成黑底方块的原因
+    —— Pillow 对 mode=P 的 ICO/CUR 不会应用 AND 掩码，会把调色板展开成不透明 RGBA。
+    """
+    stride = ((width * 8 + 31) // 32) * 4
+    mask_stride = ((width + 31) // 32) * 4
+
+    xor = bytearray()
+    mask = bytearray()
+    for y in range(height - 1, -1, -1):            # DIB 自下而上
+        row = bytearray(stride)
+        mrow = bytearray(mask_stride)
+        for x in range(width):
+            row[x] = indices[y * width + x]
+            if (x, y) in transparent:
+                mrow[x // 8] |= 0x80 >> (x % 8)
+        xor += row
+        mask += mrow
+
+    pal = bytearray()
+    for i in range(256):
+        r, g, b = palette[i] if i < len(palette) else (0, 0, 0)
+        pal += bytes((b, g, r, 0))
+
+    dib = (struct.pack("<IiiHHIIiiII", 40, width, height * 2, 1, 8, 0,
+                       len(xor) + len(mask), 0, 0, 0, 0)
+           + bytes(pal) + bytes(xor) + bytes(mask))
+    entry = struct.pack("<BBBBHHII", width % 256, height % 256, 0, 0, hx, hy, len(dib), 22)
+    return struct.pack("<HHH", 0, 2, 1) + entry + dib
+
+
 def make_pack(dest: Path, n_roles: int = 4) -> Path:
     """合成一个极简 Windows 光标包（带 .inf）。"""
     dest.mkdir(parents=True, exist_ok=True)
@@ -163,8 +198,91 @@ def test_file_roundtrip(tmp: Path) -> None:
     check("延时保留", got.delay == 100, f"{got.delay}ms")
 
 
+def test_indexed_cursor() -> None:
+    section("3. 调色板光标（8bpp）的 AND 掩码透明度")
+    from cursorkit.windows import decode_cur_image
+
+    w = h = 16
+    palette = [(0, 0, 0), (255, 0, 0)]          # 0=黑（也是透明处的颜色）1=红
+    indices, transparent = [], set()
+    for y in range(h):
+        for x in range(w):
+            inside = 2 <= x < 14 and 2 <= y < 14
+            indices.append(1 if inside else 0)
+            if not inside:
+                transparent.add((x, y))
+
+    data = make_cur_8bpp(w, h, palette, indices, transparent, hx=3, hy=4)
+    img = decode_cur_image(data)
+
+    check("位深从 DIB 头读到（8bpp）", img.bpp == 8, f"bpp={img.bpp}")
+    check("热点从容器读出来", (img.hotspot_x, img.hotspot_y) == (3, 4),
+          f"({img.hotspot_x},{img.hotspot_y})")
+
+    al = img.rgba[3::4]
+    trans_px = sum(1 for a in al if a == 0)
+    opaque_px = sum(1 for a in al if a == 255)
+    check("掩码标为透明的像素真的透明了", trans_px == len(transparent),
+          f"透明 {trans_px}，期望 {len(transparent)}")
+    check("其余像素保持不透明", opaque_px == w * h - len(transparent), f"不透明 {opaque_px}")
+    check("**不是 100% 不透明**（黑底 bug 的直接判据）", trans_px > 0,
+          f"透明像素 {trans_px}/{len(al)}")
+
+    def px(x, y):
+        i = (y * w + x) * 4
+        return tuple(img.rgba[i : i + 4])
+
+    check("内部像素用对了调色板（红）", px(3, 3)[:3] == (255, 0, 0), str(px(3, 3)))
+    check("角落像素透明", px(0, 0)[3] == 0, str(px(0, 0)))
+
+
+def test_indexed_real_pack() -> None:
+    """真实素材：初音那类 8bpp 包曾经整张变黑底。找到就验，找不到就跳过。"""
+    import os
+    cand = os.environ.get("CURSORKIT_TEST_INDEXED_PACK")
+    roots = [Path(cand)] if cand else [
+        Path.home() / "Downloads",
+        Path.home() / ".icons",
+    ]
+    found = None
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for p in sorted(root.rglob("Normal.ani")) + sorted(root.rglob("*.ani")):
+            try:
+                frames = parse_ani(p.read_bytes()).frames
+                itype, entries = parse_icondir(frames[0])
+                e = max(entries, key=lambda x: x.pixels)
+                hdr = frames[0][e.offset : e.offset + e.size]
+                bpp = struct.unpack_from("<H", hdr, 14)[0]
+                if bpp == 8:
+                    found = (p, frames)
+                    break
+            except Exception:
+                continue
+        if found:
+            break
+
+    section("4. 真实 8bpp 素材（初音那类包）")
+    if not found:
+        print("      没找到 8bpp 的 .ani 素材，跳过")
+        print("      设置 CURSORKIT_TEST_INDEXED_PACK=<目录> 可指定")
+        return
+
+    path, frames = found
+    from cursorkit.windows import decode_cur_image
+    img = decode_cur_image(frames[0])
+    al = img.rgba[3::4]
+    trans = sum(1 for a in al if a == 0)
+    print(f"      素材: {path}")
+    check("8bpp 素材解出了透明像素", trans > 0,
+          f"{img.width}x{img.height} {img.bpp}bpp，透明 {trans}/{len(al)}")
+    check("不是整张不透明", trans < len(al), f"透明 {trans}/{len(al)}")
+
+
+
 def test_synthetic_pack(tmp: Path) -> None:
-    section("3. 合成包：.cur 解析 + .inf 映射 + 完整导入")
+    section("5. 合成包：.cur 解析 + .inf 映射 + 完整导入")
     pack = make_pack(tmp / "synth-pack", n_roles=4)
     with PackSource(pack) as ps:
         info = ps.inspect()
@@ -192,7 +310,7 @@ def test_synthetic_pack(tmp: Path) -> None:
 
 
 def test_archive(tmp: Path) -> None:
-    section("4. 压缩包与文件夹结果一致")
+    section("6. 压缩包与文件夹结果一致")
     pack = tmp / "synth-pack"
     if not pack.is_dir():
         check("合成包存在", False)
@@ -215,7 +333,7 @@ def test_archive(tmp: Path) -> None:
 
 
 def test_name_sanitize() -> None:
-    section("5. 主题名清洗")
+    section("7. 主题名清洗")
     cases = [
         ("KINOMOTO SAKURA", "KINOMOTO-SAKURA"),
         ("Kinomoto\u2011Sakura", "Kinomoto-Sakura"),      # U+2011 断字连字符
@@ -232,7 +350,7 @@ def test_name_sanitize() -> None:
 
 
 def test_alias_table() -> None:
-    section("6. 别名表自洽")
+    section("8. 别名表自洽")
     seen: dict[str, str] = {}
     clashes = []
     for canon, aliases in ALIAS_TABLE.items():
@@ -253,11 +371,11 @@ def test_alias_table() -> None:
 def test_real_pack(tmp: Path) -> None:
     pack = find_real_pack()
     if pack is None:
-        section("7. 真实光标包（未找到，跳过）")
+        section("9. 真实光标包（未找到，跳过）")
         print("      设置 CURSORKIT_TEST_PACK=<目录> 可启用")
         return
 
-    section(f"7. 真实光标包：{pack.name}")
+    section(f"9. 真实光标包：{pack.name}")
     with PackSource(pack) as ps:
         info = ps.inspect()
         check("用 .inf 识别出 17 个角色", len(info.roles) == 17, f"{len(info.roles)} 个")
@@ -324,6 +442,8 @@ def main() -> int:
         tmp = Path(td)
         test_roundtrip(tmp)
         test_file_roundtrip(tmp)
+        test_indexed_cursor()
+        test_indexed_real_pack()
         test_synthetic_pack(tmp)
         test_archive(tmp)
         test_name_sanitize()
