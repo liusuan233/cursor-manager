@@ -3,6 +3,7 @@
     cursor-manager --list
     cursor-manager --import <路径> [选项]
     cursor-manager apply <主题名> [尺寸]
+    cursor-manager remove <主题名> [选项]
     cursor-manager --help
 
 `dispatch()` 返回 None 表示"不是命令行子命令"，交给 GUI 处理。
@@ -17,7 +18,7 @@ from pathlib import Path
 from . import __version__
 from .apply import apply_theme, read_state
 from .importer import DEFAULT_SIZES, import_pack
-from .themes import scan_themes
+from .themes import delete_theme, deletion_blockers, scan_themes, theme_size
 
 USAGE = f"""cursor-manager {__version__} —— Linux 光标主题管理器（niri / Wayland）
 
@@ -26,6 +27,7 @@ USAGE = f"""cursor-manager {__version__} —— Linux 光标主题管理器（ni
   cursor-manager --list                   列出已安装的光标主题
   cursor-manager --import <路径> [选项]    导入 Windows 光标包
   cursor-manager apply <主题名> [尺寸]     切换光标主题（命令行）
+  cursor-manager remove <主题名> [选项]    删除光标主题
 
 导入选项:
   --name NAME       指定主题名（默认取包内 .inf 的 SCHEME_NAME）
@@ -36,7 +38,14 @@ USAGE = f"""cursor-manager {__version__} —— Linux 光标主题管理器（ni
 apply 选项:
   --dry-run         只报告会改哪些文件，不真的写
 
+remove 选项:
+  --purge           永久删除（默认是移入回收站，可恢复）
+  --dry-run         只显示会删什么、有多大，不动文件
+  --yes             跳过确认（非交互环境下必须显式给出）
+
   <路径> 可以是：文件夹 / .zip / .tar.gz / .tar.xz / .tar.bz2 / 单个 .ani/.cur/.ico
+
+  只有用户目录下的主题可以删除；系统主题（/usr/share/icons）和当前正在生效的主题会被拒绝。
 """
 
 
@@ -192,6 +201,84 @@ def cmd_apply(argv: list[str], quiet: bool = True) -> int:
 
 # ---------------------------------------------------------------------------
 
+def _human(n: int) -> str:
+    v = float(n)
+    for unit in ("B", "KB", "MB", "GB"):
+        if v < 1024 or unit == "GB":
+            return f"{v:.0f} {unit}" if unit == "B" else f"{v:.1f} {unit}"
+        v /= 1024
+    return f"{n} B"
+
+
+def cmd_remove(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog="cursor-manager remove", add_help=False)
+    p.add_argument("theme")
+    p.add_argument("--purge", action="store_true",
+                   help="永久删除（默认移入回收站，可恢复）")
+    p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--yes", "-y", action="store_true")
+    try:
+        args = p.parse_args(argv)
+    except SystemExit:
+        print(USAGE)
+        return 2
+
+    themes = {t.name: t for t in scan_themes()}
+    t = themes.get(args.theme)
+    if t is None:
+        print(f"\033[31m找不到主题 '{args.theme}'\033[0m")
+        near = [n for n in themes if args.theme.lower() in n.lower()]
+        if near:
+            print("  你是不是想要: " + ", ".join(near[:5]))
+        print("  用 cursor-manager --list 看全部可用主题。")
+        return 1
+
+    active = read_state().get("niri") or read_state().get("gtk3") or ""
+    blockers = deletion_blockers(t, active=active)
+    if blockers:
+        print(f"\033[31m不能删除 '{t.name}':\033[0m")
+        for b in blockers:
+            print(f"  · {b}")
+        return 1
+
+    size, files = theme_size(t.path)
+    action = "永久删除" if args.purge else "移入回收站"
+    print(f"{action}: {t.name}")
+    print(f"  路径: {t.path}")
+    print(f"  内容: {files} 个文件，{_human(size)}")
+    if args.purge:
+        print("  \033[33m⚠ --purge 是永久删除，无法从回收站恢复\033[0m")
+
+    if args.dry_run:
+        print("\n（--dry-run，没有改动任何文件）")
+        return 0
+
+    if not args.yes:
+        if not sys.stdin.isatty():
+            print("\n\033[31m非交互环境，需要显式加 --yes 才会真的删除\033[0m")
+            return 1
+        try:
+            ans = input(f"确认{action}？输入 yes 继续: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("\n已取消")
+            return 1
+        if ans not in ("yes", "y"):
+            print("已取消")
+            return 1
+
+    rep = delete_theme(t, active=active, purge=args.purge)
+    if not rep.ok:
+        print(f"\033[31m删除失败: {rep.detail}\033[0m")
+        return 1
+    print(f"\n\033[32m✔ {rep.detail}\033[0m")
+    if not args.purge and rep.moved_to:
+        print(f"  位置: {rep.moved_to}")
+        print("  要恢复：从文件管理器的回收站还原即可")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+
 def dispatch(argv: list[str]) -> int | None:
     """处理命令行子命令。返回 None 表示"交给 GUI"。"""
     args = argv[1:]
@@ -211,6 +298,8 @@ def dispatch(argv: list[str]) -> int | None:
         return cmd_import(args[1:])
     if head == "apply":
         return cmd_apply(args[1:])
+    if head in ("remove", "rm", "delete", "uninstall-theme"):
+        return cmd_remove(args[1:])
     if head.startswith("-"):
         print(f"\033[31m未知选项: {head}\033[0m\n")
         print(USAGE)

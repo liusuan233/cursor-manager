@@ -12,7 +12,10 @@
 - **动画预览** —— 自己解码 Xcursor 二进制格式逐帧播放，普通图片查看器打不开这种文件
 - **导入 Windows 光标包** —— 优先读包内 `.inf` 的 `[Strings]` 段拿到微软官方角色映射，
   比按文件名猜可靠得多；自动从 256×256 原图降采样出多档尺寸
-- **CLI 不依赖 GTK** —— `--list` / `--import` / `apply` 在无图形环境的服务器上也能用
+- **删除主题** —— 默认移入回收站（可从文件管理器恢复），`--purge` 才真删。
+  系统主题、当前正在使用的主题会被拒绝 —— 删掉正在用的那个会让所有程序静默回落到
+  Adwaita，正是这个项目要防的坑
+- **CLI 不依赖 GTK** —— `--list` / `--import` / `apply` / `remove` 在无图形环境的服务器上也能用
 
 ## 下载哪个
 
@@ -64,6 +67,8 @@ cursor-manager --list [-v]                  # 列出已安装主题
 cursor-manager apply <主题名> [尺寸]         # 切换主题
 cursor-manager apply <主题名> --dry-run     # 只报告会改哪些文件
 cursor-manager --import <路径> [选项]        # 导入 Windows 光标包
+cursor-manager remove <主题名>              # 删除主题（移入回收站）
+cursor-manager remove <主题名> --purge      # 永久删除
 cursor-manager --help
 ```
 
@@ -92,13 +97,14 @@ sha256sum -c SHA256SUMS
 
 ## 自检
 
-这个版本带两套机器可验证的自检，不需要人看图，退出码非 0 即失败：
+这个版本带三套机器可验证的自检，不需要人看图，退出码非 0 即失败：
 
 ```bash
-make test        # GUI 29 项 + 导入器 38 项
+make test        # 导入器 38 项 + 删除 24 项 + GUI 39 项
 ```
 
-`selftest_import.py` 会自己合成光标包，没有外部素材也能完整跑。
+`selftest_import.py` 会自己合成光标包，没有外部素材也能完整跑；
+`selftest_delete.py` 在伪造的 HOME 里验证删除闸门与回收站规范。
 另有 `verify_cursor.c`，用 libXcursor 官方 API 验证"主题名能否真的被加载"。
 
 ---

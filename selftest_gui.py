@@ -226,12 +226,52 @@ def main() -> int:
             else:
                 print("      （合成包不存在，跳过 —— 由 selftest_import.py 覆盖）")
 
-        print("\n=== 13. 忙碌状态 ===")
+        print("\n=== 13. 删除界面 ===")
+        check("头部有删除按钮", win.delete_btn is not None)
+
+        from cursorkit.themes import deletion_blockers
+        active = state["active"]
+        rows = rows_of(win.theme_list)
+        themes = [r.theme for r in rows]
+
+        # 找一个"不可删"的和一个"可删"的，分别验证按钮状态
+        blocked = next((t for t in themes if deletion_blockers(t, active=active)), None)
+        deletable = next((t for t in themes if not deletion_blockers(t, active=active)), None)
+
+        if blocked is not None:
+            win.selected = blocked
+            win._update_delete_button()
+            check("选中不可删的主题 → 按钮禁用", not win.delete_btn.get_sensitive(),
+                  blocked.name)
+            tip = win.delete_btn.get_tooltip_text() or ""
+            check("tooltip 说明了不能删的原因", "不能删除" in tip, tip.split("\n")[-1][:60])
+
+        if deletable is not None:
+            win.selected = deletable
+            win._update_delete_button()
+            check("选中可删的主题 → 按钮启用", win.delete_btn.get_sensitive(), deletable.name)
+            tip = win.delete_btn.get_tooltip_text() or ""
+            check("tooltip 给出了大小和文件数", "个文件" in tip, tip[:60])
+
+            dlg = cm.DeleteDialog(win, deletable, lambda *_: None)
+            check("删除确认对话框可构造", dlg.get_child() is not None)
+            dlg.destroy()
+        else:
+            print("      （本机没有可删的用户主题，跳过可删分支 —— 由 selftest_delete.py 覆盖）")
+
+        # 恢复选中，免得影响后面的忙碌状态检查
+        win.selected = themes[0] if themes else None
+        win._update_delete_button()
+
+        print("\n=== 14. 忙碌状态 ===")
         win._set_busy(True, "测试中…")
         check("忙碌时禁用导入按钮", not win.import_btn.get_sensitive())
+        check("忙碌时禁用删除按钮", not win.delete_btn.get_sensitive())
         check("忙碌时状态栏有提示", "测试中" in win.status.get_text(), win.status.get_text()[:40])
         win._set_busy(False)
         check("恢复后重新启用", win.import_btn.get_sensitive())
+        check("恢复后删除按钮按选中项重算", win.delete_btn.get_sensitive() ==
+              (not deletion_blockers(win.selected, active=active) if win.selected else False))
 
         app.quit()
 

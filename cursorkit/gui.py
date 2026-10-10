@@ -25,7 +25,9 @@ from cursorkit import CursorFile, XcursorError, apply_theme, read_state, scan_th
 from cursorkit.importer import (  # noqa: E402
     DEFAULT_SIZES, PackSource, import_pack,
 )
-from cursorkit.themes import Cursor, Theme  # noqa: E402
+from cursorkit.themes import (  # noqa: E402
+    Cursor, Theme, delete_theme, deletion_blockers, theme_size,
+)
 
 APP_ID = "io.github.cursorkit.Manager"
 DISPLAY_PX = 96          # 预览格子边长
@@ -74,6 +76,70 @@ def texture_from_rgba(width: int, height: int, rgba: bytes) -> Gdk.Texture:
     return Gdk.MemoryTexture.new(
         width, height, Gdk.MemoryFormat.R8G8B8A8, GLib.Bytes.new(rgba), width * 4
     )
+
+
+def _human(n: int) -> str:
+    v = float(n)
+    for unit in ("B", "KB", "MB", "GB"):
+        if v < 1024 or unit == "GB":
+            return f"{v:.0f} {unit}" if unit == "B" else f"{v:.1f} {unit}"
+        v /= 1024
+    return f"{n} B"
+
+
+class DeleteDialog(Gtk.Window):
+    """删除确认：先把"删什么、多大、能不能恢复"摆清楚，再让用户点。"""
+
+    def __init__(self, parent: Gtk.Window, theme: Theme, on_confirm):
+        super().__init__(title="删除主题", transient_for=parent, modal=True)
+        self.set_default_size(540, -1)
+
+        size, files = theme_size(theme.path)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        for m in ("top", "bottom", "start", "end"):
+            getattr(box, f"set_margin_{m}")(18)
+
+        head = Gtk.Label(xalign=0)
+        head.set_markup(
+            f"<span size='large' weight='bold'>"
+            f"删除 {GLib.markup_escape_text(theme.name)}</span>"
+        )
+        box.append(head)
+
+        info = Gtk.Label(xalign=0, wrap=True)
+        info.add_css_class("dim")
+        info.set_selectable(True)
+        info.set_text(f"{theme.path}\n{files} 个文件，{_human(size)}")
+        box.append(info)
+
+        purge = Gtk.CheckButton(label="永久删除（不放进回收站，无法恢复）")
+        box.append(purge)
+
+        hint = Gtk.Label(xalign=0, wrap=True)
+        hint.add_css_class("dim")
+        hint.set_markup(
+            "<span size='small'>默认移入回收站，可以从文件管理器的回收站恢复。</span>"
+        )
+        box.append(hint)
+
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        row.set_halign(Gtk.Align.END)
+        cancel = Gtk.Button(label="取消")
+        cancel.connect("clicked", lambda *_: self.close())
+        row.append(cancel)
+
+        ok = Gtk.Button(label="删除")
+        ok.add_css_class("destructive-action")
+
+        def go(*_):
+            self.close()
+            on_confirm(theme, purge.get_active())
+        ok.connect("clicked", go)
+        row.append(ok)
+        box.append(row)
+
+        self.set_child(box)
 
 
 # ---------------------------------------------------------------------------
@@ -458,6 +524,12 @@ class ManagerWindow(Gtk.ApplicationWindow):
         self.apply_btn.connect("clicked", self._on_apply)
         hb.pack_end(self.apply_btn)
 
+        # 删除：只在"真能删"的时候可用，否则禁用并用 tooltip 说明原因
+        self.delete_btn = Gtk.Button.new_from_icon_name("user-trash-symbolic")
+        self.delete_btn.set_tooltip_text("删除选中的主题")
+        self.delete_btn.connect("clicked", self._on_delete)
+        hb.pack_end(self.delete_btn)
+
         # 导入：菜单里两项，因为 GTK 的文件对话框一次只能选"文件"或"文件夹"
         actions = Gio.SimpleActionGroup()
         for name, handler in (("import-file", self._on_import_file),
@@ -628,6 +700,7 @@ class ManagerWindow(Gtk.ApplicationWindow):
             self.meta_label.set_text("")
             self.banner.set_visible(False)
             self.apply_btn.set_sensitive(False)
+            self._update_delete_button()
             return
 
         self.title_label.set_text(theme.name)
@@ -641,10 +714,12 @@ class ManagerWindow(Gtk.ApplicationWindow):
                 "<span size='small'>提示：需要把光标文件放进该目录的 cursors/ 子目录里。</span>"
             )
             self.apply_btn.set_sensitive(False)
+            self._update_delete_button()      # 布局不合法的主题反而更该能删掉
             return
 
         self.banner.set_visible(False)
         self.apply_btn.set_sensitive(True)
+        self._update_delete_button()
 
         sizes: set[int] = set()
         for c in theme.cursors:
@@ -694,6 +769,54 @@ class ManagerWindow(Gtk.ApplicationWindow):
         result = apply_theme(self.selected.name, self.apply_size)
         ResultDialog(self, result).present()
         self._update_status()
+
+    # ---- 删除 ----
+    def _active_theme(self) -> str:
+        st = read_state()
+        return st.get("niri") or st.get("gtk3") or ""
+
+    def _update_delete_button(self) -> None:
+        """删不动的时候禁用按钮，并把原因写进 tooltip —— 别让用户点了才被拒。"""
+        t = self.selected
+        if t is None:
+            self.delete_btn.set_sensitive(False)
+            self.delete_btn.set_tooltip_text("先选一个主题")
+            return
+        blockers = deletion_blockers(t, active=self._active_theme())
+        if blockers:
+            self.delete_btn.set_sensitive(False)
+            self.delete_btn.set_tooltip_text("不能删除：\n· " + "\n· ".join(blockers))
+        else:
+            size, files = theme_size(t.path)
+            self.delete_btn.set_sensitive(True)
+            self.delete_btn.set_tooltip_text(f"删除 {t.name}（{files} 个文件，{_human(size)}）")
+
+    def _on_delete(self, _btn: Gtk.Button) -> None:
+        t = self.selected
+        if t is None:
+            return
+        blockers = deletion_blockers(t, active=self._active_theme())
+        if blockers:
+            self._report_error("不能删除这个主题：\n\n" + "\n".join(f"· {b}" for b in blockers))
+            return
+        DeleteDialog(self, t, self._do_delete).present()
+
+    def _do_delete(self, theme: Theme, purge: bool) -> None:
+        rep = delete_theme(theme, active=self._active_theme(), purge=purge)
+        if not rep.ok:
+            self._report_error(f"删除失败：\n\n{rep.detail}")
+            return
+
+        self.selected = None
+        self.refresh()
+        if (row := self.theme_list.get_row_at_index(0)) is not None:
+            self.theme_list.select_row(row)
+
+        verb = "永久删除" if purge else "移入回收站"
+        tail = f" · 位置 {rep.moved_to}" if rep.moved_to else ""
+        self.status.set_text(
+            f"✔ 已{verb} {theme.name}（{rep.files} 个文件，{rep.size_human}）{tail}"
+        )
 
     # ---- 导入 ----
     def _on_import_file(self) -> None:
@@ -810,8 +933,10 @@ class ManagerWindow(Gtk.ApplicationWindow):
         for w in (self.apply_btn, self.import_btn, self.anim_btn, self.magnify_btn):
             w.set_sensitive(not busy)
         if busy:
+            self.delete_btn.set_sensitive(False)
             self.status.set_text(f"⏳ {message}")
         else:
+            self._update_delete_button()      # 删除键的可用性取决于选中的主题
             self._update_status()
 
     def _confirm(self, title: str, body: str, ok_label: str, on_ok,

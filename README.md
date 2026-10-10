@@ -53,7 +53,9 @@
 - **一键应用** —— 同时写全 6 个配置点，逐项报告结果，可选干跑
 - **导入 Windows 光标包** —— `.ani`/`.cur`/`.ico`、`.zip`/`.tar.gz`/文件夹都能吃，
   优先读包内 `.inf` 拿到微软官方的角色映射
-- **命令行** —— `--list` / `--import` / `apply`，不需要 GTK 也能在服务器上跑
+- **删除主题** —— 默认移入回收站（可恢复）。系统主题、当前正在使用的主题会被拒绝，
+  避免删完让所有程序静默回落到 Adwaita
+- **命令行** —— `--list` / `--import` / `apply` / `remove`，不需要 GTK 也能在服务器上跑
 
 ---
 
@@ -153,6 +155,7 @@ cursor-manager
 | 悬停格子 | 显示该光标的档位映射和全部别名 |
 | 应用到系统 | 一次写全 6 个配置点，弹窗逐项报告结果 |
 | 导入主题 ▾ | 从压缩包/光标文件，或从文件夹导入 Windows 光标包 |
+| 🗑 删除 | 删除选中的主题（默认进回收站）。删不动的时候按钮禁用，悬停会说明原因 |
 
 ### 命令行
 
@@ -162,11 +165,17 @@ cursor-manager --list [-v]                  # 列出已安装主题（-v 显示�
 cursor-manager apply <主题名> [尺寸]         # 切换主题
 cursor-manager apply <主题名> 24 --dry-run  # 只报告会改哪些文件
 cursor-manager --import <路径> [选项]        # 导入光标包
+cursor-manager remove <主题名>              # 删除主题（移入回收站）
+cursor-manager remove <主题名> --purge      # 永久删除
 cursor-manager --help
 ```
 
 `apply` 会依次写入 niri、DMS、GTK3、GTK4、`.Xresources`、gsettings 六处。
 niri 保存配置后会自动重载，但**已经开着的程序需要重启**。
+
+`remove` 只删用户目录下的主题，并且**拒绝删除当前正在生效的那个** ——
+删掉它会让所有程序静默回落到 Adwaita，正是这个项目要防的坑。
+默认移入回收站，可以从文件管理器恢复；`--purge` 才是真的删除。
 
 ---
 
@@ -249,8 +258,9 @@ cursorkit/                    核心库 + 界面（也可单独作为库使用�
 └── __main__.py               统一入口：有子命令走 cli，否则开窗
 
 cursor-manager                直接从源码目录运行的入口
-selftest_gui.py               GUI 自检（29 项）
+selftest_gui.py               GUI 自检（39 项）
 selftest_import.py            导入器自检（38 项）
+selftest_delete.py            删除功能自检（24 项，含闸门与回收站规范）
 docs/make_preview.py          生成 README 预览图
 docs/NOTES.md                 格式笔记与踩坑记录
 packaging/PKGBUILD            Arch 包
@@ -281,18 +291,19 @@ apply_theme("Adwaita", 24, dry_run=True)       # 只报告不写盘
 ## 开发
 
 ```bash
-make test        # 两个自检：GUI 29 项 + 导入器 38 项
-make check       # 只跑不需要显示服务器的那个
+make test        # 三个自检：导入器 38 + 删除 24 + GUI 39 项
+make check       # 只跑不需要显示服务器的那些
 make dist        # 源码 tarball
 make wheel       # Python wheel
 make pkg         # Arch 包
 make verify      # 把 wheel 装进干净 venv 跑一遍，验证导出可用
 ```
 
-两个自检都**不需要人看图**，退出码非 0 即失败：
+三个自检都**不需要人看图**，退出码非 0 即失败：
 
 - `selftest_import.py` —— 会自己合成光标包，没有真实素材也能完整跑；
   设 `CURSORKIT_TEST_PACK=<目录>` 可额外验证真实包
+- `selftest_delete.py` —— 在伪造的 HOME 里跑删除闸门与回收站规范
 - `selftest_gui.py` —— 构造真实窗口、跑事件循环、检查控件树实际状态
 
 另有 `verify_cursor.c`：用 libXcursor 官方 API 验证"主题名能否真的被加载"。

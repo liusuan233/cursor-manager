@@ -10,7 +10,7 @@ TARBALL := $(DISTDIR)/$(NAME)-$(VERSION).tar.gz
 # src/ 和 pkg/ 工作目录，整个目录塞进去会滚雪球（源码包里套源码包）。
 SOURCES := cursorkit \
            cursor-manager set-cursor.sh install.sh install-kinomoto-cursor.sh \
-           selftest_gui.py selftest_import.py xcursor_tool.py verify_cursor.c \
+           selftest_gui.py selftest_import.py selftest_delete.py xcursor_tool.py verify_cursor.c \
            _selftest_pack icons docs \
            packaging/PKGBUILD packaging/cursor-manager.desktop \
            pyproject.toml MANIFEST.in Makefile .gitignore \
@@ -35,7 +35,7 @@ help:
 	@echo "  make uninstall   卸载上面的安装"
 	@echo "  make pip-install pipx / pip 安装（任意发行版）"
 	@echo ""
-	@echo "  make test        两个自检（GUI 29 项 + 导入器 38 项）"
+	@echo "  make test        三个自检（导入器 38 + 删除 24 + GUI 31 项）"
 	@echo "  make check       只跑不需要显示服务器的那个自检"
 	@echo "  make clean       清理构建产物"
 
@@ -44,6 +44,9 @@ help:
 test:
 	@echo "== 导入器自检 =="
 	@$(PY) selftest_import.py
+	@echo ""
+	@echo "== 删除功能自检 =="
+	@$(PY) selftest_delete.py
 	@echo ""
 	@echo "== GUI 自检 =="
 	@$(PY) selftest_gui.py

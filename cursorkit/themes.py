@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -295,3 +296,156 @@ def grouped_by_root(themes: list[Theme]) -> dict[str, list[Theme]]:
     for t in themes:
         out.setdefault(str(t.root), []).append(t)
     return out
+
+
+# ---------------------------------------------------------------------------
+# 删除主题
+#
+# 这是本项目唯一不可逆的操作，所以四道闸门：
+#   1. 只允许删用户目录下的主题（/usr/share 里的是系统资源，动它要 root 且会坏系统）
+#   2. 不允许删当前正在生效的主题（删完所有程序会静默回落到 Adwaita —— 正是本项目要防的坑）
+#   3. 删之前必须先确认它"长得像个主题"
+#   4. 默认走回收站而不是 rm，误删可以从文件管理器恢复
+# ---------------------------------------------------------------------------
+
+@dataclass
+class DeleteReport:
+    theme: str
+    path: Path
+    method: str = ""            # "trash" | "purge" | "dry-run" | ""
+    size: int = 0               # 字节
+    files: int = 0
+    moved_to: Path | None = None
+    ok: bool = False
+    detail: str = ""
+
+    @property
+    def size_human(self) -> str:
+        n = float(self.size)
+        for unit in ("B", "KB", "MB", "GB"):
+            if n < 1024 or unit == "GB":
+                return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+            n /= 1024
+        return f"{self.size} B"
+
+
+def _data_home() -> Path:
+    return Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+
+
+def user_theme_roots() -> list[Path]:
+    """允许删除的根目录。系统目录不在其中。"""
+    return [_data_home() / "icons", Path.home() / ".icons"]
+
+
+def theme_size(path: Path) -> tuple[int, int]:
+    """(总字节数, 文件数)。符号链接只计数、不计入大小（避免跟到主题外）。"""
+    total = files = 0
+    for f in path.rglob("*"):
+        try:
+            if f.is_symlink():
+                files += 1
+            elif f.is_file():
+                files += 1
+                total += f.stat().st_size
+        except OSError:
+            continue
+    return total, files
+
+
+def deletion_blockers(theme: Theme, active: str = "") -> list[str]:
+    """返回阻止删除的原因；空列表 = 可以删。"""
+    reasons: list[str] = []
+    try:
+        path = theme.path.resolve()
+    except OSError:
+        return ["路径无法解析"]
+
+    allowed = [r.resolve() for r in user_theme_roots()]
+    if not any(path == r or path.is_relative_to(r) for r in allowed):
+        reasons.append(
+            f"它位于系统目录 {theme.root} —— 删除需要 root，而且会破坏系统主题，"
+            "请改用发行版的包管理器"
+        )
+
+    if active and theme.name == active:
+        reasons.append(
+            f"它正是当前生效的主题 —— 删掉之后所有程序会静默回落到 Adwaita。"
+            f"请先切换到别的主题"
+        )
+
+    if not theme.path.is_dir():
+        reasons.append("不是一个目录")
+    elif not (theme.path / "cursors").is_dir() and not (theme.path / "index.theme").is_file():
+        reasons.append("看着不像光标主题（既没有 cursors/ 也没有 index.theme）")
+
+    return reasons
+
+
+def move_to_trash(path: Path) -> Path:
+    """按 freedesktop 回收站规范搬运，使其能从文件管理器里恢复。
+
+    结构：
+        <XDG_DATA_HOME>/Trash/files/<名字>
+        <XDG_DATA_HOME>/Trash/info/<名字>.trashinfo
+    """
+    from datetime import datetime
+    from urllib.parse import quote
+
+    files_dir = _data_home() / "Trash" / "files"
+    info_dir = _data_home() / "Trash" / "info"
+    files_dir.mkdir(parents=True, exist_ok=True)
+    info_dir.mkdir(parents=True, exist_ok=True)
+
+    dest = files_dir / path.name
+    n = 1
+    while dest.exists() or (info_dir / f"{dest.name}.trashinfo").exists():
+        dest = files_dir / f"{path.name}.{n}"
+        n += 1
+
+    shutil.move(str(path), str(dest))          # 跨设备时 shutil 会自动退化为复制+删除
+
+    (info_dir / f"{dest.name}.trashinfo").write_text(
+        "[Trash Info]\n"
+        f"Path={quote(str(path))}\n"
+        f"DeletionDate={datetime.now().isoformat(timespec='seconds')}\n",
+        encoding="utf-8",
+    )
+    return dest
+
+
+def delete_theme(theme: Theme, active: str = "", purge: bool = False,
+                 dry_run: bool = False) -> DeleteReport:
+    """删除一个光标主题。
+
+    purge=False（默认）移进回收站，可恢复；purge=True 才真的 rm -rf。
+    """
+    rep = DeleteReport(theme=theme.name, path=theme.path)
+
+    blockers = deletion_blockers(theme, active=active)
+    if blockers:
+        rep.detail = "；".join(blockers)
+        return rep
+
+    rep.size, rep.files = theme_size(theme.path)
+
+    if dry_run:
+        rep.method = "dry-run"
+        rep.ok = True
+        rep.detail = f"将{'永久删除' if purge else '移入回收站'}"
+        return rep
+
+    try:
+        if purge:
+            shutil.rmtree(theme.path)
+            rep.method = "purge"
+            rep.detail = "已永久删除"
+        else:
+            rep.moved_to = move_to_trash(theme.path)
+            rep.method = "trash"
+            rep.detail = f"已移入回收站（{rep.moved_to}），可恢复"
+        rep.ok = True
+    except OSError as e:
+        rep.detail = f"{type(e).__name__}: {e}"
+
+    return rep
