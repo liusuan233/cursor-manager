@@ -70,6 +70,34 @@ def main() -> int:
             return False
         GLib.timeout_add(ms, run)
 
+    def wait_until(pred, then, what: str = "", timeout_ms: int = 15000):
+        """等到条件成立再进入下一阶段。
+
+        预览格子是分批 idle 构建的，主题里光标越多、机器越忙，用时越长。
+        用固定延时会在慢机器上偶发失败（曾经在 47 个光标的主题上翻过车），
+        所以这里改成轮询等待 —— 测试必须确定性地通过或失败。
+        """
+        remaining = [timeout_ms]
+
+        def tick():
+            try:
+                if pred():
+                    then()
+                    return False
+            except Exception as e:                       # noqa: BLE001
+                FAILURES.append(f"等待 {what} 时抛异常: {type(e).__name__}: {e}")
+                app.quit()
+                return False
+            remaining[0] -= 50
+            if remaining[0] <= 0:
+                FAILURES.append(f"等待超时：{what or pred}")
+                print(f"\n\033[31m等待超时：{what or pred}\033[0m")
+                app.quit()
+                return False
+            return True
+
+        GLib.timeout_add(50, tick)
+
     def phase1():
         win = app.props.active_window
         state["win"] = win
@@ -94,7 +122,10 @@ def main() -> int:
         check("自动选中当前生效的主题",
               sel is not None and sel.theme.name == state["active"],
               f"选中 {sel.theme.name if sel else '无'}，期望 {state['active']}")
-        pump(1200, phase2)
+        tiles_ready = (lambda: win.selected is not None
+                       and len(win.tiles) == len(win.selected.cursors)
+                       and len(win.tiles) > 0)
+        wait_until(tiles_ready, phase2, "首屏预览格子构建完成")
 
     def phase2():
         win = state["win"]
@@ -127,7 +158,8 @@ def main() -> int:
 
         print("\n=== 5. 改变尺寸后重绘 ===")
         win.size_dd.set_selected(cm.SIZES.index(48))
-        pump(900, phase3)
+        wait_until(lambda: len(win.tiles) == len(win.selected.cursors) and len(win.tiles) > 0,
+                   phase3, "改尺寸后预览重建完成")
 
     def phase3():
         win = state["win"]
@@ -145,7 +177,8 @@ def main() -> int:
 
         print("\n=== 6. 实际大小模式 ===")
         win.magnify_btn.set_active(False)
-        pump(900, phase4)
+        wait_until(lambda: len(win.tiles) == len(win.selected.cursors) and len(win.tiles) > 0,
+                   phase4, "切到实际大小后预览重建完成")
 
     def phase4():
         win = state["win"]
@@ -158,7 +191,7 @@ def main() -> int:
         win.magnify_btn.set_active(True)
         bad_i = next(i for i, r in enumerate(rows_of(win.theme_list)) if not r.theme.valid)
         win.theme_list.select_row(win.theme_list.get_row_at_index(bad_i))
-        pump(400, phase5)
+        wait_until(lambda: win.banner.get_visible(), phase5, "坏主题的警告条出现")
 
     def phase5():
         win = state["win"]
@@ -275,7 +308,9 @@ def main() -> int:
 
         app.quit()
 
-    pump(900, phase1)
+    wait_until(lambda: (w := app.props.active_window) is not None
+               and w.theme_list.get_selected_row() is not None,
+               phase1, "窗口就绪并自动选中主题", timeout_ms=20000)
     app.run([])
 
     print(f"\n{'='*54}")
