@@ -40,3 +40,7 @@ venv/
 
 # 编译出的验证器（源码 verify_cursor.c 保留）
 /verify_cursor
+# 我处理用户素材时用的临时解压目录（第三方版权内容，绝不入库）
+/_miku/
+/_tmp*/
+/_extract/
