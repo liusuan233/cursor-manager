@@ -24,6 +24,7 @@ include verify_cursor.c
 recursive-include _selftest_pack *
 recursive-include icons *.png
 recursive-include docs *.md *.png *.py
+recursive-include tools *.py
 recursive-include packaging *
 include .gitignore
 

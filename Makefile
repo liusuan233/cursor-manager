@@ -12,13 +12,13 @@ SOURCES := cursorkit \
            cursor-manager set-cursor.sh install.sh install-kinomoto-cursor.sh \
            selftest_gui.py selftest_import.py selftest_delete.py selftest_update.py \
            xcursor_tool.py verify_cursor.c \
-           _selftest_pack icons docs \
+           _selftest_pack icons docs tools \
            packaging/PKGBUILD packaging/cursor-manager.desktop \
            pyproject.toml MANIFEST.in Makefile .gitignore \
            README.md DIAGNOSIS.md LICENSE
 
 .PHONY: help check test dist sdist wheel install uninstall pip-install \
-        pkg pkg-install verify release _release_verify clean
+        pkg pkg-install verify release _release_verify demo clean
 
 help:
 	@echo "cursor-manager $(VERSION) —— 打包与安装"
@@ -29,6 +29,9 @@ help:
 	@echo "  make pkg         Arch 包（只构建）"
 	@echo "  make pkg-install Arch 包并安装（sudo pacman -U）"
 	@echo "  make verify      把 wheel 装进临时 venv 并跑起来，验证导出可用"
+@echo ""
+@echo "  make demo        自动生成演示视频（真跑命令 + 真解码光标，不需要录屏）"
+@echo "  make demo-list   只列出演示视频的场景"
 	@echo ""
 	@echo "  make release     打完整发布包并逐项实测（源码包 + wheel + Arch 包 + SHA256SUMS）"
 	@echo ""
@@ -210,6 +213,13 @@ _release_verify:
 	@# e) 校验和自检
 	@cd $(RELDIR) && sha256sum -c SHA256SUMS >/dev/null && echo "  ✓ SHA256SUMS 全部匹配"
 	@rm -rf $(DISTDIR)/rv
+# ---------------------------------------------------------------- 演示视频
+
+demo:
+	@$(PY) tools/make-demo.py
+
+demo-list:
+	@$(PY) tools/make-demo.py --list
 
 # ---------------------------------------------------------------- 清理
 
@@ -219,5 +229,6 @@ clean:
 	@find . -name '*.pyc' -delete 2>/dev/null || true
 	@# makepkg 的工作目录和产物
 	@rm -rf packaging/src packaging/pkg
+	@rm -f demo/*.mp4 demo/*.gif
 	@rm -f packaging/$(NAME)-*.tar.gz packaging/$(NAME)-*.tar.xz \
 	       packaging/$(NAME)-*.tar.bz2 packaging/*.pkg.tar.*

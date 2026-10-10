@@ -44,3 +44,8 @@ venv/
 /_miku/
 /_tmp*/
 /_extract/
+
+# 演示视频是生成的构建产物（几十 MB，不适合进仓库）
+/demo/*.mp4
+/demo/*.gif
+/demo/stills/
