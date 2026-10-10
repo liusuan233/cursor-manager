@@ -2,6 +2,7 @@
 
 **Linux 鼠标光标主题管理器 —— 浏览、动画预览、一键切换、导入 Windows 光标包。**
 
+[![Release](https://img.shields.io/github/v/release/liusuan233/cursor-manager?label=release&color=2ec27e)](https://github.com/liusuan233/cursor-manager/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab.svg)](https://www.python.org/)
 [![GTK](https://img.shields.io/badge/GTK-4-4a86cf.svg)](https://gtk.org/)
@@ -58,42 +59,80 @@
 
 ## 安装
 
-### Arch Linux（打本地包）
+### 从 Release 下载（推荐）
+
+打开 [Releases](https://github.com/liusuan233/cursor-manager/releases) 页面，按下表选一个文件下载：
+
+| 你的系统 | 下载 | 安装 |
+|---|---|---|
+| **Arch Linux** | `cursor-manager-<版本>-1-any.pkg.tar.zst` | `sudo pacman -U <文件>` |
+| **其他发行版** | `cursor-manager-<版本>.tar.gz` | 解包即用，或跑里面的 `./install.sh` |
+| **pipx 用户** | `cursor_manager-<版本>-py3-none-any.whl` | `pipx install <文件>` |
+
+<sub>文件名里的 `<版本>` 随 release 变化，比如 `1.0.0`。</sub>
+
+**Arch Linux**
 
 ```bash
-git clone https://github.com/liusuan233/cursor-manager && cd cursor-manager
+sudo pacman -U cursor-manager-1.0.0-1-any.pkg.tar.zst
+```
+
+依赖（`python-gobject`、`gtk4`、`python-numpy`、`python-pillow`）会由 pacman 自动装。
+装完 `cursor-manager` 就在 `/usr/bin` 里，桌面入口和图标一并注册，
+卸载走 `pacman -R cursor-manager`。
+
+**其他发行版（源码包，解包即用）**
+
+```bash
+tar -xzf cursor-manager-1.0.0.tar.gz
+cd cursor-manager-1.0.0
+
+./cursor-manager           # 方式一：直接运行，不动系统
+./install.sh               # 方式二：装到 ~/.local（含桌面入口和图标）
+./install.sh --uninstall   # 卸载
+```
+
+解包后不需要编译，也不需要 `make`。
+
+**pipx**
+
+```bash
+pipx install cursor_manager-1.0.0-py3-none-any.whl
+```
+
+> **PyGObject 装不上？** 它无法用 pip 可靠安装（需要系统库 + 编译），必须走发行版包管理器。
+> 而且它只影响图形界面 —— `--list` / `--import` / `apply` 这些命令行功能不需要它。
+>
+> ```bash
+> sudo pacman -S python-gobject gtk4                    # Arch
+> sudo apt install python3-gi gir1.2-gtk-4.0            # Debian / Ubuntu
+> sudo dnf install python3-gobject gtk4                 # Fedora
+> ```
+
+**校验下载的文件**（Release 里附有 `SHA256SUMS`）
+
+```bash
+sha256sum -c SHA256SUMS
+```
+
+---
+
+### 从源码安装（想改代码 / 用最新提交）
+
+```bash
+git clone https://github.com/liusuan233/cursor-manager
+cd cursor-manager
+
+./cursor-manager      # 直接跑
+./install.sh          # 或装到 ~/.local
+pipx install .        # 或用 pipx
+
+# Arch 用户也可以自己打本地包
 make pkg              # 需要 python-pip / python-setuptools / python-wheel
 sudo pacman -U packaging/cursor-manager-*.pkg.tar.zst
 ```
 
-### 用户级安装（任意发行版）
-
-```bash
-git clone https://github.com/liusuan233/cursor-manager && cd cursor-manager
-./install.sh          # 装到 ~/.local，含桌面入口和图标
-./install.sh --uninstall
-```
-
-### pipx
-
-```bash
-pipx install .
-```
-
-PyGObject 无法用 pip 可靠安装，需要走发行版包管理器：
-
-```bash
-sudo pacman -S python-gobject gtk4                    # Arch
-sudo apt install python3-gi gir1.2-gtk-4.0            # Debian / Ubuntu
-sudo dnf install python3-gobject gtk4                 # Fedora
-```
-
-### 不安装，直接从源码跑
-
-```bash
-git clone https://github.com/liusuan233/cursor-manager && cd cursor-manager
-./cursor-manager
-```
+只想用的话，上面的 Release 方式更省事。
 
 ---
 
