@@ -152,15 +152,17 @@ release:
 	@test -z "$$(git status --porcelain 2>/dev/null)" || { \
 	    echo "\033[31m✘ 工作区不干净，先提交再发版:\033[0m"; git status --short; exit 1; }
 	@$(MAKE) --no-print-directory clean >/dev/null
-	@mkdir -p $(RELDIR)
 	@echo "\033[36m==>\033[0m 构建源码包 / wheel / Arch 包"
-	@$(MAKE) --no-print-directory dist >/dev/null
-	@$(MAKE) --no-print-directory wheel >/dev/null
+	@# 注意：dist 目标内部会跑 clean，所以 $(RELDIR) 必须等这些都跑完再建
+	@$(MAKE) --no-print-directory dist >/dev/null 2>&1
+	@$(MAKE) --no-print-directory wheel >/dev/null 2>&1
 	@cp $(TARBALL) packaging/ && cd packaging && makepkg -f --nodeps --nocheck >/dev/null 2>&1
+	@mkdir -p $(RELDIR)
 	@cp $(TARBALL) $(RELDIR)/
 	@cp $(DISTDIR)/cursor_manager-$(VERSION)-*.whl $(RELDIR)/
 	@cp packaging/*.pkg.tar.zst $(RELDIR)/
 	@rm -f packaging/$(NAME)-$(VERSION).tar.gz
+	@ls -1 $(RELDIR) | sed 's/^/    /'
 	@echo ""
 	@echo "\033[36m==>\033[0m 生成校验和"
 	@cd $(RELDIR) && sha256sum * > SHA256SUMS && cat SHA256SUMS | sed 's/^/    /'
