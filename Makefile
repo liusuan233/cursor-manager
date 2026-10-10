@@ -147,12 +147,12 @@ TAG      := v$(VERSION)
 release:
 	@# 1. 版本号必须三处一致，否则发出去的包对不上号
 	@test "$$(grep -oP '^pkgver=\K.*' packaging/PKGBUILD)" = "$(VERSION)" || { \
-	    echo "\033[31m✘ PKGBUILD 的 pkgver 与 cursorkit.__version__ ($(VERSION)) 不一致\033[0m"; exit 1; }
+	    printf '\033[31m✘ PKGBUILD 的 pkgver 与 cursorkit.__version__ (%s) 不一致\033[0m\n' "$(VERSION)"; exit 1; }
 	@# 2. 工作区必须干净 —— 保证产物对应某个确定的提交
 	@test -z "$$(git status --porcelain 2>/dev/null)" || { \
-	    echo "\033[31m✘ 工作区不干净，先提交再发版:\033[0m"; git status --short; exit 1; }
+	    printf '\033[31m✘ 工作区不干净，先提交再发版:\033[0m\n'; git status --short; exit 1; }
 	@$(MAKE) --no-print-directory clean >/dev/null
-	@echo "\033[36m==>\033[0m 构建源码包 / wheel / Arch 包"
+	@printf '\033[36m==>\033[0m 构建源码包 / wheel / Arch 包\n'
 	@# 注意：dist 目标内部会跑 clean，所以 $(RELDIR) 必须等这些都跑完再建
 	@$(MAKE) --no-print-directory dist >/dev/null 2>&1
 	@$(MAKE) --no-print-directory wheel >/dev/null 2>&1
@@ -164,10 +164,10 @@ release:
 	@rm -f packaging/$(NAME)-$(VERSION).tar.gz
 	@ls -1 $(RELDIR) | sed 's/^/    /'
 	@echo ""
-	@echo "\033[36m==>\033[0m 生成校验和"
+	@printf '\033[36m==>\033[0m 生成校验和\n'
 	@cd $(RELDIR) && sha256sum * > SHA256SUMS && cat SHA256SUMS | sed 's/^/    /'
 	@echo ""
-	@echo "\033[36m==>\033[0m 实测每个产物"
+	@printf '\033[36m==>\033[0m 实测每个产物\n'
 	@$(MAKE) --no-print-directory _release_verify
 	@echo ""
 	@printf '\033[32m✔ 发布包就绪: %s\033[0m\n' "$(RELDIR)"
