@@ -13,7 +13,7 @@
 命令行子命令走 cli，只有真要开窗时才导入 gui。
 """
 
-__version__ = "1.0.1"
+__version__ = "1.0.2"
 
 from .xcursor import CursorFile, Frame, XcursorError, write_xcursor  # noqa: F401
 from .themes import Cursor, Theme, scan_themes, iter_search_roots  # noqa: F401

@@ -28,6 +28,7 @@ from cursorkit.importer import (  # noqa: E402
 from cursorkit.themes import (  # noqa: E402
     Cursor, Theme, delete_theme, deletion_blockers, theme_size,
 )
+from cursorkit.update import check as update_check  # noqa: E402
 
 APP_ID = "io.github.cursorkit.Manager"
 DISPLAY_PX = 96          # 预览格子边长
@@ -496,6 +497,15 @@ class ManagerWindow(Gtk.ApplicationWindow):
         refresh.connect("clicked", lambda *_: self.refresh())
         hb.pack_start(refresh)
 
+        # 应用菜单：目前只有"检查更新"，放左侧，不跟右边的导入按钮混在一起
+        app_menu = Gio.Menu()
+        app_menu.append("检查更新…", "win.check-update")
+        self.menu_btn = Gtk.MenuButton()
+        self.menu_btn.set_icon_name("open-menu-symbolic")
+        self.menu_btn.set_menu_model(app_menu)
+        self.menu_btn.set_tooltip_text("更多")
+        hb.pack_start(self.menu_btn)
+
         label = Gtk.Label(label="尺寸")
         label.add_css_class("dim")
         hb.pack_start(label)
@@ -533,7 +543,8 @@ class ManagerWindow(Gtk.ApplicationWindow):
         # 导入：菜单里两项，因为 GTK 的文件对话框一次只能选"文件"或"文件夹"
         actions = Gio.SimpleActionGroup()
         for name, handler in (("import-file", self._on_import_file),
-                              ("import-folder", self._on_import_folder)):
+                              ("import-folder", self._on_import_folder),
+                              ("check-update", self._on_check_update)):
             act = Gio.SimpleAction.new(name, None)
             act.connect("activate", lambda _a, _p, h=handler: h())
             actions.add_action(act)
@@ -973,6 +984,53 @@ class ManagerWindow(Gtk.ApplicationWindow):
     def _report_error(self, message: str) -> None:
         self._confirm("出错了", message, "知道了", lambda: None,
                       cancel=False, destructive=False)
+
+    # ---- 检查更新 ----
+    def _on_check_update(self) -> None:
+        """显式点击才联网。检查放在后台线程，结果回主线程弹窗。"""
+        self._set_busy(True, "正在检查 GitHub 上的最新版本…")
+
+        def work() -> None:
+            info = update_check()
+            GLib.idle_add(self._show_update_result, info)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _show_update_result(self, info) -> bool:
+        self._set_busy(False)
+
+        if info.error:
+            self._report_error(
+                f"检查更新失败：\n\n{info.error}\n\n（不影响任何本地功能）"
+            )
+            return False
+
+        if info.has_update:
+            body = (
+                f"当前版本：v{info.current}\n"
+                f"最新版本：v{info.latest}"
+                + (f"（{info.published}）" if info.published else "")
+                + f"\n\n{info.url}\n\n"
+                "本工具**不会自动更新** —— 它会写你的 ~/.config，"
+                "自动替换出问题的代价太高。升级方式：\n\n"
+                "  Arch Linux  sudo pacman -U <新的 .pkg.tar.zst>\n"
+                "  源码 / 其他  重新下载源码包，解包后 ./install.sh\n"
+                "  pipx         pipx install --force <新的 .whl>"
+            )
+            self._confirm("发现新版本", body, "打开发布页",
+                          lambda: self._open_url(info.url),
+                          cancel=True, destructive=False)
+        else:
+            self._confirm("检查更新", info.summary, "知道了", lambda: None,
+                          cancel=False, destructive=False)
+        return False
+
+    def _open_url(self, url: str) -> None:
+        try:
+            Gtk.UriLauncher.new(url).launch(self, None, None)
+        except Exception:                       # noqa: BLE001 —— 没有浏览器时退回复制链接
+            Gdk.Display.get_default().get_clipboard().set(url)
+            self.status.set_text(f"发布页链接已复制到剪贴板：{url}")
 
     def _update_status(self) -> None:
         state = read_state()

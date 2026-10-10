@@ -55,7 +55,10 @@
   优先读包内 `.inf` 拿到微软官方的角色映射
 - **删除主题** —— 默认移入回收站（可恢复）。系统主题、当前正在使用的主题会被拒绝，
   避免删完让所有程序静默回落到 Adwaita
-- **命令行** —— `--list` / `--import` / `apply` / `remove`，不需要 GTK 也能在服务器上跑
+- **检查更新** —— 显式执行才联网查 GitHub 最新 release；**只检查不自动更新**
+  （这工具会写你的 `~/.config`，自动替换出问题的代价太高）
+- **命令行** —— `--list` / `--import` / `apply` / `remove` / `--check-update`，
+  不需要 GTK 也能在服务器上跑
 
 ---
 
@@ -71,12 +74,12 @@
 | **其他发行版** | `cursor-manager-<版本>.tar.gz` | 解包即用，或跑里面的 `./install.sh` |
 | **pipx 用户** | `cursor_manager-<版本>-py3-none-any.whl` | `pipx install <文件>` |
 
-<sub>文件名里的 `<版本>` 随 release 变化，比如 `1.0.1`。</sub>
+<sub>文件名里的 `<版本>` 随 release 变化，比如 `1.0.2`。</sub>
 
 **Arch Linux**
 
 ```bash
-sudo pacman -U cursor-manager-1.0.1-1-any.pkg.tar.zst
+sudo pacman -U cursor-manager-1.0.2-1-any.pkg.tar.zst
 ```
 
 依赖（`python-gobject`、`gtk4`、`python-numpy`、`python-pillow`）会由 pacman 自动装。
@@ -86,8 +89,8 @@ sudo pacman -U cursor-manager-1.0.1-1-any.pkg.tar.zst
 **其他发行版（源码包，解包即用）**
 
 ```bash
-tar -xzf cursor-manager-1.0.1.tar.gz
-cd cursor-manager-1.0.1
+tar -xzf cursor-manager-1.0.2.tar.gz
+cd cursor-manager-1.0.2
 
 ./cursor-manager           # 方式一：直接运行，不动系统
 ./install.sh               # 方式二：装到 ~/.local（含桌面入口和图标）
@@ -99,7 +102,7 @@ cd cursor-manager-1.0.1
 **pipx**
 
 ```bash
-pipx install cursor_manager-1.0.1-py3-none-any.whl
+pipx install cursor_manager-1.0.2-py3-none-any.whl
 ```
 
 > **PyGObject 装不上？** 它无法用 pip 可靠安装（需要系统库 + 编译），必须走发行版包管理器。
@@ -167,6 +170,7 @@ cursor-manager apply <主题名> 24 --dry-run  # 只报告会改哪些文件
 cursor-manager --import <路径> [选项]        # 导入光标包
 cursor-manager remove <主题名>              # 删除主题（移入回收站）
 cursor-manager remove <主题名> --purge      # 永久删除
+cursor-manager --check-update               # 检查有没有新版本（唯一会联网的命令）
 cursor-manager --help
 ```
 
@@ -253,14 +257,16 @@ cursorkit/                    核心库 + 界面（也可单独作为库使用�
 ├── importer.py               角色映射 + 主题包导入
 ├── themes.py                 主题扫描、布局校验、别名归并
 ├── apply.py                  写入 6 个配置点 + 读回状态
+├── update.py                 检查 GitHub 有没有新版本（只检查，不自动更新）
 ├── cli.py                    命令行子命令（不导入 GTK）
 ├── gui.py                    GTK4 界面
 └── __main__.py               统一入口：有子命令走 cli，否则开窗
 
 cursor-manager                直接从源码目录运行的入口
-selftest_gui.py               GUI 自检（39 项）
-selftest_import.py            导入器自检（38 项）
+selftest_gui.py               GUI 自检（42 项）
+selftest_import.py            导入器自检（45 项，含调色板掩码回归）
 selftest_delete.py            删除功能自检（24 项，含闸门与回收站规范）
+selftest_update.py            检查更新自检（25 项，mock 打桩，离线确定）
 docs/make_preview.py          生成 README 预览图
 docs/NOTES.md                 格式笔记与踩坑记录
 packaging/PKGBUILD            Arch 包
@@ -291,19 +297,20 @@ apply_theme("Adwaita", 24, dry_run=True)       # 只报告不写盘
 ## 开发
 
 ```bash
-make test        # 三个自检：导入器 38 + 删除 24 + GUI 39 项
-make check       # 只跑不需要显示服务器的那些
+make test        # 四个自检：导入器 45 + 删除 24 + 检查更新 25 + GUI 42 项
+make check       # 只跑不需要显示服务器的那些（即除 GUI 外的三个）
 make dist        # 源码 tarball
 make wheel       # Python wheel
 make pkg         # Arch 包
 make verify      # 把 wheel 装进干净 venv 跑一遍，验证导出可用
 ```
 
-三个自检都**不需要人看图**，退出码非 0 即失败：
+四个自检都**不需要人看图**，退出码非 0 即失败：
 
 - `selftest_import.py` —— 会自己合成光标包，没有真实素材也能完整跑；
   设 `CURSORKIT_TEST_PACK=<目录>` 可额外验证真实包
 - `selftest_delete.py` —— 在伪造的 HOME 里跑删除闸门与回收站规范
+- `selftest_update.py` —— 全部用 mock 打桩，**离线确定性**；末尾有一项真实网络检查，连不上就跳过
 - `selftest_gui.py` —— 构造真实窗口、跑事件循环、检查控件树实际状态
 
 另有 `verify_cursor.c`：用 libXcursor 官方 API 验证"主题名能否真的被加载"。

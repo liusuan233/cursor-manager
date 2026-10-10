@@ -10,7 +10,8 @@ TARBALL := $(DISTDIR)/$(NAME)-$(VERSION).tar.gz
 # src/ 和 pkg/ 工作目录，整个目录塞进去会滚雪球（源码包里套源码包）。
 SOURCES := cursorkit \
            cursor-manager set-cursor.sh install.sh install-kinomoto-cursor.sh \
-           selftest_gui.py selftest_import.py selftest_delete.py xcursor_tool.py verify_cursor.c \
+           selftest_gui.py selftest_import.py selftest_delete.py selftest_update.py \
+           xcursor_tool.py verify_cursor.c \
            _selftest_pack icons docs \
            packaging/PKGBUILD packaging/cursor-manager.desktop \
            pyproject.toml MANIFEST.in Makefile .gitignore \
@@ -47,6 +48,9 @@ test:
 	@echo ""
 	@echo "== 删除功能自检 =="
 	@$(PY) selftest_delete.py
+	@echo ""
+	@echo "== 检查更新自检 =="
+	@$(PY) selftest_update.py
 	@echo ""
 	@echo "== GUI 自检 =="
 	@$(PY) selftest_gui.py

@@ -244,6 +244,15 @@ def main() -> int:
         check("win.import-file / win.import-folder 已注册",
               {"import-file", "import-folder"} <= set(names), str(names))
 
+        check("头部有应用菜单（检查更新入口）", win.menu_btn is not None)
+        m = win.menu_btn.get_menu_model()
+        check("应用菜单里有检查更新",
+              m is not None and m.get_n_items() >= 1
+              and "检查更新" in (m.get_item_attribute_value(0, "label", None) or
+                                 GLib.Variant.new_string("")).get_string(),
+              f"{m.get_n_items() if m else 0} 项")
+        check("win.check-update 动作已注册", "check-update" in names, str(names))
+
         print("\n=== 12. 导入结果对话框 ===")
         import tempfile
         from cursorkit.importer import import_pack

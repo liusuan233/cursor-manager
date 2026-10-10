@@ -19,6 +19,7 @@ from . import __version__
 from .apply import apply_theme, read_state
 from .importer import DEFAULT_SIZES, import_pack
 from .themes import delete_theme, deletion_blockers, scan_themes, theme_size
+from .update import check as check_update
 
 USAGE = f"""cursor-manager {__version__} —— Linux 光标主题管理器（niri / Wayland）
 
@@ -28,6 +29,7 @@ USAGE = f"""cursor-manager {__version__} —— Linux 光标主题管理器（ni
   cursor-manager --import <路径> [选项]    导入 Windows 光标包
   cursor-manager apply <主题名> [尺寸]     切换光标主题（命令行）
   cursor-manager remove <主题名> [选项]    删除光标主题
+  cursor-manager --check-update           检查 GitHub 上有没有新版本
 
 导入选项:
   --name NAME       指定主题名（默认取包内 .inf 的 SCHEME_NAME）
@@ -201,6 +203,50 @@ def cmd_apply(argv: list[str], quiet: bool = True) -> int:
 
 # ---------------------------------------------------------------------------
 
+def cmd_check_update(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog="cursor-manager --check-update", add_help=False)
+    p.add_argument("--quiet", "-q", action="store_true")
+    p.add_argument("--notes", action="store_true", help="同时打印新版本的发布说明")
+    try:
+        args = p.parse_args(argv)
+    except SystemExit:
+        print(USAGE)
+        return 2
+
+    if not args.quiet:
+        print("正在检查 GitHub 上的最新版本…")
+    info = check_update()
+
+    if info.error:
+        print(f"\033[31m{info.summary}\033[0m")
+        print("  （检查更新失败不影响任何本地功能）")
+        return 1
+
+    if info.has_update:
+        print(f"\033[33m⬆ {info.summary}\033[0m")
+        if info.published:
+            print(f"  发布于: {info.published}")
+        print(f"  发布页: {info.url}")
+        print()
+        print("  怎么升级（本工具不会自动更新）:")
+        print("    Arch Linux : sudo pacman -U <新的 .pkg.tar.zst>")
+        print("    源码 / 其他: 重新下载源码包，解包后 ./install.sh")
+        print("    pipx       : pipx install --force <新的 .whl>")
+        if args.notes and info.notes:
+            print()
+            print("  ── 发布说明（节选）" + "─" * 30)
+            for line in info.notes.splitlines()[:40]:
+                print(f"  {line}")
+        return 0
+
+    print(f"\033[32m✔ {info.summary}\033[0m")
+    if info.url and not args.quiet:
+        print(f"  最新发布页: {info.url}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+
 def _human(n: int) -> str:
     v = float(n)
     for unit in ("B", "KB", "MB", "GB"):
@@ -296,6 +342,8 @@ def dispatch(argv: list[str]) -> int | None:
         return cmd_list(verbose="-v" in args or "--verbose" in args)
     if head == "--import":
         return cmd_import(args[1:])
+    if head in ("--check-update", "check-update", "update"):
+        return cmd_check_update(args[1:])
     if head == "apply":
         return cmd_apply(args[1:])
     if head in ("remove", "rm", "delete", "uninstall-theme"):
