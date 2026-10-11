@@ -15,7 +15,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 APPS="$HOME/.local/share/applications"
 BIN="$HOME/.local/bin"
 HICOLOR="$HOME/.local/share/icons/hicolor"
-SIZES=(256 128 64 48 32)
+SIZES=(512 256 128 64 48 32)
 
 ok()  { printf '\033[32m  ✓\033[0m %s\n' "$*"; }
 info(){ printf '\033[36m==>\033[0m %s\n' "$*"; }
@@ -37,16 +37,27 @@ uninstall() {
 info "安装 cursor-manager（源: $HERE）"
 
 # ---- 1. 图标 ----
+# 每档各自装进对应目录。原来有一行无条件把 512 的图拷进 256x256 ——
+# 那会让图标加载器拿到尺寸不符的位图，也覆盖掉了下面这个回退逻辑。
 for s in "${SIZES[@]}"; do
     src="$HERE/icons/cursor-manager-$s.png"
-    [ -f "$src" ] || { [ "$s" = 256 ] && src="$HERE/icons/cursor-manager.png"; }
+    [ -f "$src" ] || { [ "$s" = 512 ] && src="$HERE/icons/cursor-manager.png"; }
     if [ -f "$src" ]; then
         mkdir -p "$HICOLOR/${s}x${s}/apps"
         cp -f "$src" "$HICOLOR/${s}x${s}/apps/cursor-manager.png"
     fi
 done
-mkdir -p "$HICOLOR/scalable/apps"
-cp -f "$HERE/icons/cursor-manager.png" "$HICOLOR/256x256/apps/cursor-manager.png" 2>/dev/null || true
+# 清掉不属于当前尺寸档的旧文件，否则换了图标可能还显示老缓存
+for f in "$HICOLOR"/*x*/apps/cursor-manager.png; do
+    [ -e "$f" ] || continue
+    sz=$(basename "$(dirname "$(dirname "$f")")"); sz=${sz%x*}
+    keep=no
+    for s in "${SIZES[@]}"; do [ "$s" = "$sz" ] && keep=yes; done
+    [ "$keep" = no ] && rm -f "$f"
+done
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache -f -t "$HICOLOR" >/dev/null 2>&1 || true
+fi
 ok "图标 -> $HICOLOR/*/apps/cursor-manager.png"
 
 # ---- 2. 桌面入口 ----

@@ -18,7 +18,7 @@ SOURCES := cursorkit \
            README.md DIAGNOSIS.md LICENSE
 
 .PHONY: help check test dist sdist wheel install uninstall pip-install \
-        pkg pkg-install verify release _release_verify demo clean
+        pkg pkg-install verify release _release_verify demo icon icon-preview clean
 
 help:
 	@echo "cursor-manager $(VERSION) —— 打包与安装"
@@ -30,6 +30,8 @@ help:
 	@echo "  make pkg-install Arch 包并安装（sudo pacman -U）"
 	@echo "  make verify      把 wheel 装进临时 venv 并跑起来，验证导出可用"
 @echo ""
+@echo "  make icon        重新生成应用图标（6 个尺寸档）"
+@echo "  make icon-preview 只出预览图（含 32px 实际大小的像素对照）"
 @echo "  make demo        自动生成演示视频（真跑命令 + 真解码光标，不需要录屏）"
 @echo "  make demo-list   只列出演示视频的场景"
 	@echo ""
@@ -214,6 +216,12 @@ _release_verify:
 	@cd $(RELDIR) && sha256sum -c SHA256SUMS >/dev/null && echo "  ✓ SHA256SUMS 全部匹配"
 	@rm -rf $(DISTDIR)/rv
 # ---------------------------------------------------------------- 演示视频
+
+icon:
+	@$(PY) tools/make-icon.py
+
+icon-preview:
+	@$(PY) tools/make-icon.py --preview
 
 demo:
 	@$(PY) tools/make-demo.py

@@ -49,3 +49,6 @@ venv/
 /demo/*.mp4
 /demo/*.gif
 /demo/stills/
+
+# 图标预览图是调试用的
+/icons/_preview.png
