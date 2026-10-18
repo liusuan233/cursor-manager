@@ -129,26 +129,58 @@ ALIAS_TABLE: dict[str, list[str]] = {
 # Windows 光标包里的 17 个角色。
 # inf_key 是 .inf [Strings] 段里用的键名（微软官方命名）。
 # 顺序 = Windows 注册表 Scheme 值的顺序，不能乱。
+#
+# 关键词表要覆盖**两套命名习惯**：
+#   · 微软官方方案的写法：Normal / Working / Precision / Handwriting /
+#     Vertical / Horizontal / Diagonal1 / Diagonal2 / Pin
+#   · X11 的写法：SizeNS / SizeWE / SizeNWSE / SizeNESW / SizeAll
+# 没有 .inf 的包只能靠这张表猜，所以宁多勿少。
 ROLES: list[tuple[str, str, str, list[str]]] = [
     # (inf_key,     中文含义,     源文件关键词,                        规范 Xcursor 名)
-    ("pointer",     "正常选择",   ["pointer", "normal", "arrow"],       "left_ptr"),
-    ("help",        "帮助选择",   ["help", "question", "whats"],        "question_arrow"),
-    ("work",        "后台运行",   ["work", "progress", "appstarting"],  "left_ptr_watch"),
-    ("busy",        "忙",        ["busy", "wait", "watch"],            "wait"),
-    ("cross",       "精确选择",   ["cross", "precision"],               "cross"),
-    ("text",        "文本选择",   ["text", "beam", "ibeam", "caret"],   "xterm"),
-    ("hand",        "手写",      ["handwriting", "nwpen", "pen"],      "pencil"),
-    ("unavailable", "不可用",     ["unavailable", "no", "forbidden"],   "circle"),
-    ("vert",        "垂直调整",   ["vert", "ns", "northsouth"],         "bottom_side"),
-    ("horz",        "水平调整",   ["horz", "we", "eastwest"],           "left_side"),
-    ("dgn1",        "对角线＼",   ["dgn1", "nwse", "fdiag", "diag1"],   "bottom_right_corner"),
-    ("dgn2",        "对角线／",   ["dgn2", "nesw", "bdiag", "diag2"],   "bottom_left_corner"),
-    ("move",        "移动",      ["move", "sizeall", "fleur", "all"],  "move"),
-    ("alternate",   "候选选择",   ["alternate", "uparrow", "alt", "up"], "center_ptr"),
-    ("link",        "链接选择",   ["link", "hand", "pointing"],         "hand2"),
-    ("loc",         "位置选择",   ["loc", "pin", "location"],           "cell"),
-    ("person",      "人员",      ["person", "people"],                 "person"),
+    ("pointer",     "正常选择",   ["pointer", "normal", "arrow", "default", "ptr",
+                                  "leftptr", "标准", "正常", "指针", "箭头"],
+                                                                    "left_ptr"),
+    ("help",        "帮助选择",   ["help", "question", "whats", "qmark",
+                                  "帮助", "问号", "求助"],             "question_arrow"),
+    ("work",        "后台运行",   ["work", "working", "progress", "appstarting",
+                                  "background", "后台", "运行"],        "left_ptr_watch"),
+    ("busy",        "忙",        ["busy", "wait", "watch", "hourglass",
+                                  "忙", "等待", "沙漏"],               "wait"),
+    ("cross",       "精确选择",   ["cross", "crosshair", "precision", "precise",
+                                  "精确", "十字"],                     "cross"),
+    ("text",        "文本选择",   ["text", "beam", "ibeam", "caret", "xterm",
+                                  "文本", "输入", "文字"],             "xterm"),
+    # 'hand' 必须排在 link 前面：微软方案里 Hand.cur 是"手写"，
+    # 而 link 的关键词里也有 'hand'（对应 Linux 的 hand2 手型链接）
+    ("hand",        "手写",      ["hand", "handwriting", "nwpen", "pen", "write",
+                                  "pencil", "手写", "笔"],              "pencil"),
+    ("unavailable", "不可用",     ["unavailable", "notallowed", "forbidden", "circle",
+                                  "禁用", "不可用", "禁止"],            "circle"),
+    ("vert",        "垂直调整",   ["vert", "vertical", "sizens", "ns",
+                                  "北南", "垂直"],                      "bottom_side"),
+    ("horz",        "水平调整",   ["horz", "horiz", "horizontal", "sizewe", "we",
+                                  "水平", "东西"],                      "left_side"),
+    ("dgn1",        "对角线＼",   ["dgn1", "diagonal1", "diag1", "nwse", "fdiag",
+                                  "sizenwse", "对角线1"],               "bottom_right_corner"),
+    ("dgn2",        "对角线／",   ["dgn2", "diagonal2", "diag2", "nesw", "bdiag",
+                                  "sizenesw", "对角线2"],               "bottom_left_corner"),
+    ("move",        "移动",      ["move", "sizeall", "fleur", "all",
+                                  "移动", "全部"],                      "move"),
+    ("alternate",   "候选选择",   ["alternate", "uparrow", "alt", "up",
+                                  "候选", "向上"],                      "center_ptr"),
+    ("link",        "链接选择",   ["link", "hand", "pointing", "hand2",
+                                  "链接", "手型"],                      "hand2"),
+    ("loc",         "位置选择",   ["loc", "pin", "location", "cell",
+                                  "位置", "定位"],                      "cell"),
+    ("person",      "人员",      ["person", "people", "人员", "用户"],   "person"),
 ]
+
+# 两三个字母的关键词太容易误伤（'Small.ani' 含 'all'、'Normal' 含 'no'），
+# 只允许它们**整词**命中：SizeAll.cur → ['size','all'] ✓，Small.ani → ✗
+WEAK_KEYWORDS = frozenset({"ns", "we", "up", "all", "alt", "pen", "no"})
+
+_CAMEL_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_SEP_RE = re.compile(r"[^0-9a-z\u4e00-\u9fff]+")
 ROLE_BY_KEY = {r[0]: r for r in ROLES}
 ROLE_BY_CANON = {r[3]: r for r in ROLES}
 # loc 的规范名 'cell' 不在别名表里，补上（person 同理，但没有额外别名）
@@ -332,20 +364,68 @@ def _parse_inf(path: Path) -> tuple[dict[str, str], str]:
     return mapping, scheme
 
 
+def _norm(text: str) -> str:
+    """小写并去掉所有分隔符。
+
+    这样 'Diagonal-1' / 'diagonal_1' / 'Diagonal 1' / 'Diagonal1' 全都归一成
+    'diagonal1' —— 不然同一个包换个连字符就猜不出来了。
+    """
+    return _SEP_RE.sub("", text.lower())
+
+
+def _tokens(stem: str) -> set[str]:
+    """把文件名切成词，用来给弱关键词做整词匹配。
+
+    要处理 camelCase：'SizeNWSE' → {'size', 'nwse'}
+    """
+    spaced = _CAMEL_RE.sub(" ", stem)
+    return {t for t in _SEP_RE.split(spaced.lower()) if t}
+
+
 def _guess_role(filename: str) -> str | None:
-    """没有 .inf 时按文件名猜角色。"""
-    stem = Path(filename).stem.lower()
-    # 先做精确匹配，避免 "hand" 抢走 "handwriting"
+    """没有 .inf 时按文件名猜角色。
+
+    三层，从严到宽：
+      1. 与 .inf 键名（微软官方命名）归一化后**完全相同**
+      2. 与任一关键词归一化后**完全相同**
+      3. 关键词**子串**匹配，最长优先；两三个字母的弱关键词只允许整词命中
+
+    第 3 层之前的历史实现只有子串匹配，实测会把
+    Diagonal1 / Diagonal2 / Horizontal 全部漏掉（关键词表里是 diag1/horz，
+    它们并不是 diagonal1/horizontal 的子串），而 'Small.ani' 又会因为含
+    'all' 被猜成"移动"。
+    """
+    stem = Path(filename).stem
+    norm = _norm(stem)
+    if not norm:
+        return None
+
+    # 1) 官方键名精确命中，置信度最高
     for key, _label, _kw, _canon in ROLES:
-        if stem == key:
+        if norm == _norm(key):
             return key
+
+    # 2) 关键词精确命中（normal→pointer、working→work、precision→cross…）
+    for key, _label, keywords, _canon in ROLES:
+        for kw in keywords:
+            if norm == _norm(kw):
+                return key
+
+    # 3) 子串匹配，最长关键词胜出
+    toks = _tokens(stem)
     best: tuple[int, str] | None = None
     for key, _label, keywords, _canon in ROLES:
         for kw in keywords:
-            if kw in stem:
-                score = len(kw)
-                if best is None or score > best[0]:
-                    best = (score, key)
+            nkw = _norm(kw)
+            if not nkw:
+                continue
+            if nkw in WEAK_KEYWORDS:
+                if nkw not in toks:
+                    continue
+            elif nkw not in norm:
+                continue
+            if best is None or len(nkw) > best[0]:
+                best = (len(nkw), key)
     return best[1] if best else None
 
 
@@ -472,6 +552,17 @@ class PackSource:
             role = _guess_role(f.name)
             if role and role not in assigned:
                 assigned[role] = f
+
+        # 没有 .inf 就全靠文件名猜，猜漏猜错的风险明显更高，得说清楚 —— 以及
+        # 告诉用户怎么补救（补个 .inf 进来重导最省事，很多包的 .inf 是通用的）
+        if not inf_map:
+            missing = len(ROLES) - len(assigned)
+            if missing:
+                inspection.warnings.append(
+                    f"这个包没有 .inf：{len(ROLES)} 个角色里 {missing} 个没能从文件名认出来，"
+                    "会继承系统默认外观。想要精确映射，把 .inf 放进包里重新导入一次"
+                    "（很多包的 .inf 是通用的，也可以手工写一个）"
+                )
 
         taken: set[str] = set()
         for key, label, _kw, canonical in ROLES:

@@ -436,6 +436,92 @@ def test_real_pack(tmp: Path) -> None:
               f"Name={info.name}" in idx and "Inherits=" in idx, idx.replace("\n", " | "))
 
 
+def make_pack_noinf(dest: Path) -> Path:
+    """合成一个**没有 .inf** 的包，用微软官方方案的标准文件名。
+
+    这是真实世界里最常见的情况 —— 很多包是手工拼的，只有 .ani/.cur 文件。
+    """
+    dest.mkdir(parents=True, exist_ok=True)
+    names = ["Normal", "Help", "Working", "Busy", "Precision", "Text",
+             "Handwriting", "Unavailable", "Vertical", "Horizontal",
+             "Diagonal1", "Diagonal2", "Move", "Alternate", "Link", "Pin", "Person"]
+    for i, fname in enumerate(names):
+        w = h = 32
+        px = bytearray()
+        for y in range(h):
+            for x in range(w):
+                inside = 4 <= x < 28 and 4 <= y < 28
+                px += (bytes((40 + i * 10, 100, 200, 255)) if inside
+                       else bytes((0, 0, 0, 0)))
+        (dest / f"{fname}.cur").write_bytes(make_cur(w, h, bytes(px), hx=1, hy=1))
+    return dest
+
+
+def test_guess_roles(tmp: Path) -> None:
+    section("10. 没有 .inf 时的文件名猜测")
+    from cursorkit.importer import _guess_role
+
+    cases = [
+        # 微软官方方案的 17 个标准名
+        ("Normal.ani", "pointer"), ("Help.ani", "help"), ("Working.ani", "work"),
+        ("Busy.ani", "busy"), ("Precision.ani", "cross"), ("Text.ani", "text"),
+        ("Handwriting.ani", "hand"), ("Unavailable.ani", "unavailable"),
+        ("Vertical.ani", "vert"), ("Horizontal.ani", "horz"),
+        ("Diagonal1.ani", "dgn1"), ("Diagonal2.ani", "dgn2"),
+        ("Move.ani", "move"), ("Alternate.ani", "alternate"),
+        ("Link.ani", "link"), ("Pin.cur", "loc"), ("Person.cur", "person"),
+        # X11 命名习惯
+        ("SizeNS.cur", "vert"), ("SizeWE.cur", "horz"),
+        ("SizeNWSE.cur", "dgn1"), ("SizeNESW.cur", "dgn2"),
+        ("SizeAll.cur", "move"), ("xterm.cur", "text"),
+        ("left_ptr.cur", "pointer"), ("crosshair.cur", "cross"),
+        # 分隔符与大小写变体
+        ("Diagonal-1.ani", "dgn1"), ("diagonal_2.ani", "dgn2"),
+        ("  Horizontal  .ani", "horz"),
+        # 中文命名（国内包不少这么写）
+        ("正常选择.ani", "pointer"), ("文本选择.ani", "text"),
+        ("水平调整.ani", "horz"), ("垂直调整.ani", "vert"),
+        ("手写.ani", "hand"), ("移动.ani", "move"),
+        ("精确选择.ani", "cross"), ("链接选择.ani", "link"),
+    ]
+    bad = [f"{n}→{_guess_role(n)!r}(期望{w})" for n, w in cases if _guess_role(n) != w]
+    check(f"标准名/变体/中文 {len(cases)} 个用例全对", not bad, "; ".join(bad[:5]))
+
+    # 反向用例：猜不出来好过猜错
+    negatives = ["Small.ani", "Wallpaper.ani", "install.ani", "readme.cur",
+                 "thumb.cur", "Popup.ani", "screenshot.ani"]
+    wrong = [f"{n}→{_guess_role(n)!r}" for n in negatives if _guess_role(n) is not None]
+    check(f"{len(negatives)} 个无关文件名都没被误判", not wrong, "; ".join(wrong[:5]))
+
+    # 端到端：真的拿一个没有 .inf 的包走完整流程
+    pack = make_pack_noinf(tmp / "noinf-pack")
+    with PackSource(pack) as ps:
+        info = ps.inspect()
+        check("识别为未使用 .inf", not info.used_inf)
+        check("17 个角色全部认出来了", len(info.roles) == 17,
+              f"{len(info.roles)}/17，未识别 {[f.name for f in info.unmapped]}")
+        got = {r.role: r.file.name for r in info.roles}
+        check("对角线没搞反（dgn1=Diagonal1 / dgn2=Diagonal2）",
+              got.get("dgn1") == "Diagonal1.cur" and got.get("dgn2") == "Diagonal2.cur",
+              f"dgn1={got.get('dgn1')} dgn2={got.get('dgn2')}")
+        check("水平/垂直没搞反",
+              got.get("horz") == "Horizontal.cur" and got.get("vert") == "Vertical.cur",
+              f"horz={got.get('horz')} vert={got.get('vert')}")
+
+    # 缺角色时要给出可操作的提示
+    partial = tmp / "partial-pack"
+    partial.mkdir(parents=True, exist_ok=True)
+    for fname in ("Normal", "Text"):
+        (partial / f"{fname}.cur").write_bytes(
+            make_cur(32, 32, bytes(32 * 32 * 4), hx=1, hy=1))
+    with PackSource(partial) as ps:
+        info = ps.inspect()
+        check("角色不全时只认出 2 个", len(info.roles) == 2, str(len(info.roles)))
+        check("提示了「没有 .inf」和补救办法",
+              any("没有 .inf" in w for w in info.warnings),
+              "; ".join(info.warnings)[:90])
+
+
 def main() -> int:
     print("导入器自检\n" + "=" * 60)
     with tempfile.TemporaryDirectory(prefix="cursorkit-selftest-") as td:
@@ -448,6 +534,7 @@ def main() -> int:
         test_archive(tmp)
         test_name_sanitize()
         test_alias_table()
+        test_guess_roles(tmp)
         test_real_pack(tmp)
 
     print("\n" + "=" * 60)
