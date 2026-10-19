@@ -23,6 +23,9 @@ include verify_cursor.c
 # 自检素材、图标、文档、打包文件
 recursive-include _selftest_pack *
 recursive-include icons *.png
+# _preview.png 是 make icon-preview 的调试产物，被 .gitignore 忽略；
+# 它不能进源码包，否则 sdist 就跟 git 对不上了
+exclude icons/_preview.png
 recursive-include docs *.md *.png *.py
 recursive-include tools *.py
 recursive-include packaging *

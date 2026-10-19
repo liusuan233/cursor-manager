@@ -77,6 +77,17 @@ dist: clean
 	@find $(STAGE) -name '*.pyc' -delete 2>/dev/null || true
 	@find $(STAGE) -name '*.bak.*' -delete 2>/dev/null || true
 	@find $(STAGE) -name '*.egg-info' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+	@# SOURCES 是按目录整体拷的（cp -a --parents），会把 .gitignore 里的调试
+	@# 产物一并带进来 —— icons/_preview.png 就这样混进过 1.0.3 的源码包。
+	@# 这里把所有 git 不跟踪的文件删掉，让 sdist 严格等于 git 的内容。
+	@git ls-files | sort > $(DISTDIR)/.keep
+	@cd $(STAGE) && find . -type f | sed 's|^\./||' | sort > ../../$(DISTDIR)/.have
+	@comm -13 $(DISTDIR)/.keep $(DISTDIR)/.have > $(DISTDIR)/.extra || true
+	@if [ -s $(DISTDIR)/.extra ]; then \
+	    echo "  移除 git 未跟踪的文件："; sed 's/^/    - /' $(DISTDIR)/.extra; \
+	    while IFS= read -r f; do rm -f "$(STAGE)/$$f"; done < $(DISTDIR)/.extra; \
+	fi
+	@rm -f $(DISTDIR)/.keep $(DISTDIR)/.have $(DISTDIR)/.extra
 	@test -f $(STAGE)/packaging/PKGBUILD || { echo "打包文件没进源码包，检查 SOURCES 的复制方式"; exit 1; }
 	@tar -czf $(TARBALL) -C $(DISTDIR) $(NAME)-$(VERSION)
 	@rm -rf $(STAGE)
@@ -86,9 +97,20 @@ dist: clean
 	    echo "  ✘ 源码包里混进了构建产物："; \
 	    tar -tzf $(TARBALL) | grep -E '\.pkg\.tar|\.whl$$|egg-info|__pycache__|/src/cursor-manager' | head -5 | sed 's/^/    /'; \
 	    exit 1; \
-	else \
-	    printf '  \033[32m✓ 内容干净（无构建产物）\033[0m\n'; \
 	fi
+	@# 源码包内容必须与 git 跟踪的文件**完全一致**，否则 sdist 无法从仓库复现。
+	@# 之前 icons/_preview.png（被 gitignore 的调试图）就这样混进过包里，
+	@# 而且已经发出去了才在"下载回来逐文件比对"时发现。
+	@tar -tzf $(TARBALL) | grep -v '/$$' | sed 's|^$(NAME)-$(VERSION)/||' | sort > $(DISTDIR)/.sdist.list
+	@git ls-files | sort > $(DISTDIR)/.git.list
+	@if diff -q $(DISTDIR)/.git.list $(DISTDIR)/.sdist.list >/dev/null; then \
+	    printf '  \033[32m✓ 内容与 git 跟踪的文件完全一致（%s 个）\033[0m\n' "$$(wc -l < $(DISTDIR)/.git.list)"; \
+	else \
+	    echo "  ✘ 源码包与 git 跟踪的文件不一致（< 只在 git 里 / > 只在包里）："; \
+	    diff $(DISTDIR)/.git.list $(DISTDIR)/.sdist.list | grep -E '^[<>]' | head -10 | sed 's/^/    /'; \
+	    rm -f $(DISTDIR)/.git.list $(DISTDIR)/.sdist.list; exit 1; \
+	fi
+	@rm -f $(DISTDIR)/.git.list $(DISTDIR)/.sdist.list
 	@echo "  解包后直接可用:  tar -xzf $(notdir $(TARBALL)) && cd $(NAME)-$(VERSION) && ./cursor-manager"
 
 sdist:
