@@ -67,9 +67,12 @@ package() {
     install -Dm644 packaging/cursor-manager.desktop \
         "$pkgdir/usr/share/applications/cursor-manager.desktop"
 
-    local s
+    # 512 档的文件名是 cursor-manager.png（没有 -512 后缀），要单独回退一次
+    local s src
     for s in 32 48 64 128 256 512; do
-        install -Dm644 "icons/cursor-manager-$s.png" \
+        src="icons/cursor-manager-$s.png"
+        [ -f "$src" ] || src="icons/cursor-manager.png"
+        install -Dm644 "$src" \
             "$pkgdir/usr/share/icons/hicolor/${s}x${s}/apps/cursor-manager.png"
     done
 
