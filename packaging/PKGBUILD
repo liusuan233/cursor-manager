@@ -13,7 +13,7 @@
 # 想换成那样的话，把 makedepends 和 build()/package() 换掉即可。
 
 pkgname=cursor-manager
-pkgver=1.0.2
+pkgver=1.0.3
 pkgrel=1
 pkgdesc="鼠标光标主题管理器：浏览、动画预览、切换、导入 Windows 光标包（niri / Wayland）"
 arch=('any')
@@ -68,7 +68,7 @@ package() {
         "$pkgdir/usr/share/applications/cursor-manager.desktop"
 
     local s
-    for s in 32 48 64 128 256; do
+    for s in 32 48 64 128 256 512; do
         install -Dm644 "icons/cursor-manager-$s.png" \
             "$pkgdir/usr/share/icons/hicolor/${s}x${s}/apps/cursor-manager.png"
     done

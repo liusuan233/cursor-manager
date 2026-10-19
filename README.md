@@ -74,12 +74,12 @@
 | **其他发行版** | `cursor-manager-<版本>.tar.gz` | 解包即用，或跑里面的 `./install.sh` |
 | **pipx 用户** | `cursor_manager-<版本>-py3-none-any.whl` | `pipx install <文件>` |
 
-<sub>文件名里的 `<版本>` 随 release 变化，比如 `1.0.2`。</sub>
+<sub>文件名里的 `<版本>` 随 release 变化，比如 `1.0.3`。</sub>
 
 **Arch Linux**
 
 ```bash
-sudo pacman -U cursor-manager-1.0.2-1-any.pkg.tar.zst
+sudo pacman -U cursor-manager-1.0.3-1-any.pkg.tar.zst
 ```
 
 依赖（`python-gobject`、`gtk4`、`python-numpy`、`python-pillow`）会由 pacman 自动装。
@@ -89,8 +89,8 @@ sudo pacman -U cursor-manager-1.0.2-1-any.pkg.tar.zst
 **其他发行版（源码包，解包即用）**
 
 ```bash
-tar -xzf cursor-manager-1.0.2.tar.gz
-cd cursor-manager-1.0.2
+tar -xzf cursor-manager-1.0.3.tar.gz
+cd cursor-manager-1.0.3
 
 ./cursor-manager           # 方式一：直接运行，不动系统
 ./install.sh               # 方式二：装到 ~/.local（含桌面入口和图标）
@@ -102,7 +102,7 @@ cd cursor-manager-1.0.2
 **pipx**
 
 ```bash
-pipx install cursor_manager-1.0.2-py3-none-any.whl
+pipx install cursor_manager-1.0.3-py3-none-any.whl
 ```
 
 > **PyGObject 装不上？** 它无法用 pip 可靠安装（需要系统库 + 编译），必须走发行版包管理器。
